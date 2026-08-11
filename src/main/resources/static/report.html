@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>SpringLoad Performance Report</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 40px; background: #0f172a; color: #f8fafc; }
+        .card { background: #1e293b; border-radius: 8px; padding: 24px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.3); }
+        h1, h2 { color: #38bdf8; margin-top: 0; }
+        .badge { padding: 6px 12px; border-radius: 4px; font-weight: bold; display: inline-block; }
+        .pass { background: #15803d; color: #fff; }
+        .fail { background: #b91c1c; color: #fff; }
+        .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 20px; }
+        .metric { background: #0f172a; padding: 16px; border-radius: 6px; text-align: center; }
+        .metric-val { font-size: 24px; font-weight: bold; color: #38bdf8; margin-top: 8px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #334155; }
+        th { background: #0f172a; color: #94a3b8; }
+        code { background: #0f172a; padding: 2px 6px; border-radius: 4px; font-family: monospace; }
+        #loading { text-align: center; font-size: 1.2rem; color: #94a3b8; }
+    </style>
+</head>
+<body>
+<div id="loading">Loading report details...</div>
+
+<div id="report-content" style="display: none;">
+    <div class="card">
+        <h1 id="test-name">Execution Report</h1>
+        <p>
+            Status: <span id="status-badge" class="badge"></span> |
+            Duration: <span id="duration"></span>s |
+            Concurrency: <span id="concurrency"></span>
+        </p>
+
+        <div class="grid">
+            <div class="metric"><div>Total Requests</div><div id="total-requests" class="metric-val">0</div></div>
+            <div class="metric"><div>RPS</div><div id="rps" class="metric-val">0</div></div>
+            <div class="metric"><div>p95 Latency</div><div id="p95" class="metric-val">0 ms</div></div>
+            <div class="metric"><div>Errors</div><div id="errors" class="metric-val">0</div></div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Scenario Breakdown</h2>
+        <table>
+            <thead>
+            <tr>
+                <th>Scenario</th>
+                <th>Method</th>
+                <th>Path</th>
+                <th>Total Requests</th>
+                <th>p95 Latency</th>
+            </tr>
+            </thead>
+            <tbody id="scenario-rows"></tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    async function fetchAndRenderReport() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const reportId = urlParams.get('id');
+
+        if (!reportId) {
+            document.getElementById('loading').innerText = 'Error: Missing report ID in query parameters.';
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/v1/reports/${reportId}`);
+            if (!response.ok) {
+                throw new Error('Report not found');
+            }
+
+            const report = await response.json();
+
+            document.getElementById('test-name').innerText = `Execution Report: ${report.testName}`;
+            document.getElementById('duration').innerText = report.durationSeconds;
+            document.getElementById('concurrency').innerText = report.concurrency;
+
+            const badge = document.getElementById('status-badge');
+            if (report.passedThresholds) {
+                badge.innerText = 'PASSED THRESHOLDS';
+                badge.className = 'badge pass';
+            } else {
+                badge.innerText = 'FAILED THRESHOLDS';
+                badge.className = 'badge fail';
+            }
+
+            document.getElementById('total-requests').innerText = report.totalRequests.toLocaleString();
+            document.getElementById('rps').innerText = report.requestsPerSecond.toFixed(2);
+            document.getElementById('p95').innerText = `${report.overallP95LatencyMs.toFixed(2)} ms`;
+            document.getElementById('errors').innerText = report.totalErrors.toLocaleString();
+
+            const tbody = document.getElementById('scenario-rows');
+            tbody.innerHTML = '';
+
+            if (report.scenarios && report.scenarios.length > 0) {
+                report.scenarios.forEach(s => {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td>${s.scenarioName}</td>
+                        <td><code>${s.method}</code></td>
+                        <td><code>${s.path}</code></td>
+                        <td>${s.totalRequests.toLocaleString()}</td>
+                        <td>${s.p50LatencyMs.toFixed(2)} ms</td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            }
+
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('report-content').style.display = 'block';
+
+        } catch (err) {
+            document.getElementById('loading').innerText = `Failed to load report: ${err.message}`;
+        }
+    }
+
+    fetchAndRenderReport();
+</script>
+</body>
+</html>
