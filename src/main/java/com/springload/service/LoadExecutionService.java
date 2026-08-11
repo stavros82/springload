@@ -60,65 +60,75 @@ public class LoadExecutionService {
         Thread.ofVirtual().name("load-generator-", 0).start(() -> {
             try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
                 config.scenarios().stream()
-                    .filter(ScenarioConfig::enabled)
-                    .forEach(scenario -> {
-                        log.info("Initializing Virtual Threads for scenario: [{}] {}", scenario.method(), scenario.path());
-                        
-                        for (int i = 0; i < config.execution().concurrency(); i++) {
-                            executor.submit(() -> {
-                                while (System.currentTimeMillis() < endTime) {
-                                    // Dynamically replace OpenAPI path template variables
-                                    String resolvedPath = resolvePathVariables(scenario.path());
-                                    String fullUrl = config.targetBaseUrl() + resolvedPath;
+                        .filter(ScenarioConfig::enabled)
+                        .forEach(scenario -> {
+                            log.info("Initializing Virtual Threads for scenario: [{}] {}", scenario.method(), scenario.path());
 
-                                    try {
-                                        HttpRequest.Builder builder = HttpRequest.newBuilder()
-                                                .uri(URI.create(fullUrl))
-                                                .timeout(Duration.ofSeconds(5));
-
-                                        if (scenario.headers() != null) {
-                                            scenario.headers().forEach(builder::header);
-                                        }
-
+                            for (int i = 0; i < config.execution().concurrency(); i++) {
+                                executor.submit(() -> {
+                                    while (System.currentTimeMillis() < endTime) {
+                                        // Dynamically replace OpenAPI path template variables
+                                        String resolvedPath = resolvePathVariables(scenario.path());
+                                        String fullUrl = config.targetBaseUrl() + resolvedPath;
                                         String method = scenario.method().toUpperCase();
-                                        HttpRequest.BodyPublisher bodyPublisher = (scenario.body() != null && !scenario.body().isBlank())
-                                                ? HttpRequest.BodyPublishers.ofString(scenario.body())
-                                                : HttpRequest.BodyPublishers.noBody();
 
-                                        if ("POST".equals(method)) {
-                                            builder.POST(bodyPublisher);
-                                        } else if ("PUT".equals(method)) {
-                                            builder.PUT(bodyPublisher);
-                                        } else if ("DELETE".equals(method)) {
-                                            builder.DELETE();
-                                        } else {
-                                            builder.GET();
-                                        }
+                                        try {
+                                            HttpRequest.Builder builder = HttpRequest.newBuilder()
+                                                    .uri(URI.create(fullUrl))
+                                                    .timeout(Duration.ofSeconds(5));
 
-                                        long reqStart = System.currentTimeMillis();
-                                        HttpResponse<Void> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.discarding());
-                                        long reqDuration = System.currentTimeMillis() - reqStart;
+                                            if (scenario.headers() != null) {
+                                                scenario.headers().forEach(builder::header);
+                                            }
 
-                                        latencies.add(reqDuration);
+                                            HttpRequest.BodyPublisher bodyPublisher = (scenario.body() != null && !scenario.body().isBlank())
+                                                    ? HttpRequest.BodyPublishers.ofString(scenario.body())
+                                                    : HttpRequest.BodyPublishers.noBody();
 
-                                        if (response.statusCode() >= 200 && response.statusCode() < 400) {
-                                            long currentCount = requestCounter.incrementAndGet();
-                                            log.debug("SUCCESS [{}] -> {} {} (Duration: {} ms, Total OK: {})", 
-                                                    response.statusCode(), method, fullUrl, reqDuration, currentCount);
-                                        } else {
+                                            if ("POST".equals(method)) {
+                                                builder.POST(bodyPublisher);
+                                            } else if ("PUT".equals(method)) {
+                                                builder.PUT(bodyPublisher);
+                                            } else if ("DELETE".equals(method)) {
+                                                builder.DELETE();
+                                            } else {
+                                                builder.GET();
+                                            }
+
+                                            long reqStart = System.currentTimeMillis();
+                                            HttpResponse<String> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+                                            long reqDuration = System.currentTimeMillis() - reqStart;
+
+                                            latencies.add(reqDuration);
+
+                                            if (response.statusCode() >= 200 && response.statusCode() < 400) {
+                                                long currentCount = requestCounter.incrementAndGet();
+                                                log.debug("SUCCESS [{}] -> {} {} (Duration: {} ms, Total OK: {})",
+                                                        response.statusCode(), method, fullUrl, reqDuration, currentCount);
+                                            } else {
+                                                long currentErrors = errorCounter.incrementAndGet();
+                                                String responseBodyPreview = "";
+                                                try {
+                                                    responseBodyPreview = response.body();
+                                                    if (responseBodyPreview != null && responseBodyPreview.length() > 200) {
+                                                        responseBodyPreview = responseBodyPreview.substring(0, 200) + "... [truncated]";
+                                                    }
+                                                } catch (Exception ex) {
+                                                    responseBodyPreview = "Unable to read body: " + ex.getMessage();
+                                                }
+
+                                                log.warn("HTTP ERROR [{}] -> {} {} | Response Body: {} (Total Errors: {})",
+                                                        response.statusCode(), method, fullUrl, responseBodyPreview, currentErrors);
+                                            }
+                                        } catch (Exception e) {
                                             long currentErrors = errorCounter.incrementAndGet();
-                                            log.warn("HTTP ERROR [{}] -> {} {} (Total Errors: {})", 
-                                                    response.statusCode(), method, fullUrl, currentErrors);
+                                            log.error("EXECUTION ERROR dispatching to {} {}: {} (Total Errors: {})",
+                                                    method, fullUrl, e.getMessage(), currentErrors, e);
                                         }
-                                    } catch (Exception e) {
-                                        long currentErrors = errorCounter.incrementAndGet();
-                                        log.error("EXECUTION ERROR dispatching to {}: {} (Total Errors: {})", 
-                                                fullUrl, e.getMessage(), currentErrors);
                                     }
-                                }
-                            });
-                        }
-                    });
+                                });
+                            }
+                        });
             }
         });
 
@@ -129,7 +139,7 @@ public class LoadExecutionService {
             if (now >= endTime) {
                 String reportId = UUID.randomUUID().toString();
                 TestReport report = reportService.generateReport(reportId, config, startTime, latencies, requestCounter.get(), errorCounter.get());
-                
+
                 log.info("Load test '{}' completed. Final Successes: {}, Final Errors: {}, Report ID: {}",
                         config.name(), requestCounter.get(), errorCounter.get(), reportId);
 
@@ -137,9 +147,9 @@ public class LoadExecutionService {
                     emitter.send(SseEmitter.event()
                             .name("complete")
                             .data(Map.of(
-                                "message", "Test execution complete",
-                                "reportId", reportId,
-                                "reportUrl", "/report.html?id=" + reportId
+                                    "message", "Test execution complete",
+                                    "reportId", reportId,
+                                    "reportUrl", "/report.html?id=" + reportId
                             )));
                     emitter.complete();
                 } catch (Exception e) {
@@ -159,9 +169,9 @@ public class LoadExecutionService {
                 emitter.send(SseEmitter.event()
                         .name("metric")
                         .data(Map.of(
-                            "timestamp", now,
-                            "successfulRequests", totalSuccess,
-                            "failedRequests", totalErrors
+                                "timestamp", now,
+                                "successfulRequests", totalSuccess,
+                                "failedRequests", totalErrors
                         )));
             } catch (IOException e) {
                 log.error("SSE Connection disconnected by client: {}", e.getMessage());
@@ -200,7 +210,7 @@ public class LoadExecutionService {
             matcher.appendReplacement(sb, Matcher.quoteReplacement(mockValue));
         }
         matcher.appendTail(sb);
-        
+
         String resolved = sb.toString();
         log.trace("Resolved path template '{}' -> '{}'", path, resolved);
         return resolved;
