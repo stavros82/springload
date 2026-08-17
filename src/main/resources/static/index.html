@@ -4,14 +4,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>HarStress Control Center</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         * { box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 30px; background: #0f172a; color: #f8fafc; }
-        .container { max-width: 1000px; margin: 0 auto; }
+        .container { max-width: 1100px; margin: 0 auto; }
         .card { background: #1e293b; padding: 24px; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.3); margin-bottom: 20px; }
+        .header-container { display: flex; justify-content: space-between; align-items: center; }
         h1, h2, h3 { color: #38bdf8; margin-top: 0; }
         .row { display: flex; gap: 12px; margin-bottom: 15px; align-items: center; }
         .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 15px; }
+        .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 16px; }
         .form-group { margin-bottom: 12px; }
         label { display: block; font-weight: 600; margin-bottom: 6px; color: #94a3b8; font-size: 14px; }
         input[type="text"], input[type="number"], select { width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #334155; background: #0f172a; color: #f8fafc; font-size: 14px; }
@@ -23,7 +26,9 @@
         button.btn-export:hover { background: #047857; }
         button.btn-run { background: #16a34a; }
         button.btn-run:hover { background: #15803d; }
-        button:disabled { background: #475569; cursor: not-allowed; }
+        button.btn-stop { background: #e11d48; }
+        button.btn-stop:hover { background: #be123c; }
+        button:disabled { background: #475569 !important; cursor: not-allowed; opacity: 0.6; }
 
         /* Scenarios Table Styling */
         table { width: 100%; border-collapse: collapse; margin-top: 12px; margin-bottom: 16px; }
@@ -33,13 +38,31 @@
 
         pre { background: #0f172a; color: #38bdf8; padding: 16px; border-radius: 6px; overflow-x: auto; max-height: 250px; font-size: 13px; }
 
+        /* Chart Container */
+        .chart-container { position: relative; height: 380px; width: 100%; margin-top: 16px; }
+
         #reportContainer { display: none; margin-top: 16px; padding: 16px; background: #0f172a; border-radius: 6px; border: 1px solid #38bdf8; text-align: center; }
-        .badge { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; background: #334155; color: #94a3b8; }
+        .badge { display: inline-block; padding: 6px 12px; border-radius: 4px; font-size: 13px; font-weight: bold; }
+        .pass { background: #15803d; color: #fff; }
+        .fail { background: #b91c1c; color: #fff; }
+        .status-badge { padding: 4px 10px; border-radius: 4px; font-size: 12px; font-weight: bold; background: #334155; color: #94a3b8; }
+        .status-running { background: #0284c7; color: #fff; }
+        .status-complete { background: #15803d; color: #fff; }
+        .metric-box { background: #0f172a; padding: 16px; border-radius: 6px; text-align: center; border: 1px solid #334155; }
+        .metric-val { font-size: 22px; font-weight: bold; color: #38bdf8; margin-top: 6px; }
     </style>
 </head>
 <body>
 <div class="container">
-    <h1>🚀 HarStress Control Center</h1>
+    <!-- Header with Engine Badge -->
+    <div class="card">
+        <div class="header-container">
+            <div>
+                <h1>🚀 HarStress Control Center</h1>
+                <p style="color: #94a3b8; margin-bottom: 0;">Multi-Engine API Performance Testing Framework</p>
+            </div>
+        </div>
+    </div>
 
     <!-- 1. Blueprint Upload Section -->
     <div class="card">
@@ -64,13 +87,22 @@
                 <input type="text" id="targetBaseUrl" placeholder="http://localhost:8080">
             </div>
             <div class="form-group">
-                <label for="concurrency">Concurrency (Virtual Threads)</label>
+                <label for="concurrency">Concurrency</label>
                 <input type="number" id="concurrency" min="1" value="20">
             </div>
             <div class="form-group">
                 <label for="durationSeconds">Duration (Seconds)</label>
                 <input type="number" id="durationSeconds" min="1" value="10">
             </div>
+        </div>
+
+        <!-- Engine Selector Dropdown Added Here -->
+        <div class="form-group" style="margin-top: 15px;">
+            <label for="executionEngine">Execution Engine Framework</label>
+            <select id="executionEngine">
+                <option value="VIRTUAL_THREADS">Java 21+ Virtual Threads (Servlet / Blocking Client)</option>
+                <option value="REACTIVE_WEBFLUX">Spring WebFlux (Non-Blocking Netty / WebClient)</option>
+            </select>
         </div>
 
         <h3>Inspected Scenarios</h3>
@@ -90,7 +122,8 @@
 
         <div class="row">
             <button class="btn-export" onclick="downloadYaml()">📥 Export as stress.yaml</button>
-            <button class="btn-run" onclick="runTest()">▶ Execute Load Test</button>
+            <button class="btn-run" id="start-btn" onclick="runTest()">▶ Execute Load Test</button>
+            <button class="btn-stop" id="stop-btn" onclick="stopTest()" disabled>⏹ Stop Test</button>
         </div>
 
         <details style="margin-top: 15px;">
@@ -99,23 +132,76 @@
         </details>
     </div>
 
-    <!-- 3. Real-Time Execution Pulse -->
+    <!-- 3. Real-Time Execution Graph & Pulse -->
     <div class="card">
-        <h3>3. Real-Time Execution Pulse</h3>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+            <h3 style="margin: 0;">3. Real-Time Execution Graph & Pulse</h3>
+            <span id="status-badge" class="status-badge">Idle</span>
+        </div>
+
+        <!-- Real-Time Metrics Text Log -->
         <pre id="metricsLog">Awaiting test trigger...</pre>
 
-        <!-- HTML Report Trigger Button -->
+        <!-- Live Chart Container with Explicit Parent Dimensions -->
+        <div class="chart-container" style="position: relative; height: 380px; width: 100%;">
+            <canvas id="liveChart"></canvas>
+        </div>
+
+        <!-- Embedded Execution Summary Report Card (Hidden by default, rendered upon completion) -->
         <div id="reportContainer">
-            <h4 style="color: #38bdf8; margin: 0 0 10px 0;">🎉 Load Test Completed!</h4>
-            <a id="viewReportBtn" href="#" target="_blank" style="text-decoration: none;">
-                <button class="btn-export">📊 View Full HTML Report</button>
-            </a>
+            <h3 style="color: #38bdf8; margin: 0 0 10px 0;">🎉 Load Test Completed!</h3>
+            <p style="margin-top: 10px;">Status: <span id="summary-badge" class="badge"></span></p>
+            <div class="grid-4">
+                <div class="metric-box"><div>Total Requests</div><div id="rep-total" class="metric-val">0</div></div>
+                <div class="metric-box"><div>Throughput (RPS)</div><div id="rep-rps" class="metric-val">0</div></div>
+                <div class="metric-box"><div>p95 Latency</div><div id="rep-p95" class="metric-val">0 ms</div></div>
+                <div class="metric-box"><div>Errors</div><div id="rep-errors" class="metric-val">0</div></div>
+            </div>
+            <div style="margin-top: 20px;">
+                <a id="viewReportBtn" href="#" target="_blank" style="text-decoration: none;">
+                    <button class="btn-export" style="font-size: 16px; padding: 12px 24px;">📊 View Full HTML Report</button>
+                </a>
+            </div>
         </div>
     </div>
 </div>
 
 <script>
     let currentConfig = null;
+    let abortController = null;
+    let liveChart = null;
+
+    // Ensure Chart.js is properly initialized after DOM is fully loaded
+    window.addEventListener('DOMContentLoaded', () => {
+        const canvas = document.getElementById('liveChart');
+        if (!canvas) {
+            console.error("Canvas element 'liveChart' not found.");
+            return;
+        }
+        const ctx = canvas.getContext('2d');
+        liveChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    { label: 'Success Requests', data: [], borderColor: '#38bdf8', yAxisID: 'y', tension: 0.2 },
+                    { label: 'Failed Requests', data: [], borderColor: '#f43f5e', yAxisID: 'y', tension: 0.2 },
+                    { label: 'p50 (ms)', data: [], borderColor: '#4ade80', yAxisID: 'y1', borderDash: [5, 5] },
+                    { label: 'p90 (ms)', data: [], borderColor: '#fbbf24', yAxisID: 'y1', borderDash: [5, 5] },
+                    { label: 'p99 (ms)', data: [], borderColor: '#a855f7', yAxisID: 'y1' }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: { grid: { color: '#334155' } },
+                    y: { type: 'linear', position: 'left', title: { display: true, text: 'Requests', color: '#38bdf8' }, grid: { color: '#334155' } },
+                    y1: { type: 'linear', position: 'right', title: { display: true, text: 'Latency (ms)', color: '#a855f7' }, grid: { drawOnChartArea: false } }
+                }
+            }
+        });
+    });
 
     async function uploadAndParse() {
         const fileInput = document.getElementById('fileInput');
@@ -140,12 +226,13 @@
     }
 
     function renderConfigForm(config) {
-        // Populate Target and Load options
         document.getElementById('targetBaseUrl').value = config.targetBaseUrl || 'http://localhost:8080';
         document.getElementById('concurrency').value = config.execution ? config.execution.concurrency : 20;
         document.getElementById('durationSeconds').value = config.execution ? config.execution.durationSeconds : 10;
+        if (config.execution && config.execution.engine) {
+            document.getElementById('executionEngine').value = config.execution.engine;
+        }
 
-        // Populate Scenarios Table
         const tbody = document.getElementById('scenariosTableBody');
         tbody.innerHTML = '';
 
@@ -182,6 +269,7 @@
         if (!currentConfig.execution) currentConfig.execution = {};
         currentConfig.execution.concurrency = parseInt(document.getElementById('concurrency').value, 10);
         currentConfig.execution.durationSeconds = parseInt(document.getElementById('durationSeconds').value, 10);
+        currentConfig.execution.engine = document.getElementById('executionEngine').value;
     }
 
     async function downloadYaml() {
@@ -205,18 +293,34 @@
         if (!currentConfig) return alert('Parse a configuration first');
         syncConfigPayload();
 
+        const startBtn = document.getElementById('start-btn');
+        const stopBtn = document.getElementById('stop-btn');
+        const statusBadge = document.getElementById('status-badge');
         const metricsLog = document.getElementById('metricsLog');
         const reportContainer = document.getElementById('reportContainer');
         const viewReportBtn = document.getElementById('viewReportBtn');
 
-        metricsLog.innerText = 'Initializing Virtual Thread Workers...\n';
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+        statusBadge.innerText = 'Running';
+        statusBadge.className = 'status-badge status-running';
+        metricsLog.innerText = 'Initializing Workers & Streaming Pulse...\n';
         reportContainer.style.display = 'none';
+
+        if (liveChart) {
+            liveChart.data.labels = [];
+            liveChart.data.datasets.forEach(d => d.data = []);
+            liveChart.update();
+        }
+
+        abortController = new AbortController();
 
         try {
             const response = await fetch('/api/v1/test/run', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(currentConfig)
+                body: JSON.stringify(currentConfig),
+                signal: abortController.signal
             });
 
             if (!response.ok) throw new Error(`Execution error: Status ${response.status}`);
@@ -233,22 +337,89 @@
                 metricsLog.innerText += chunk;
 
                 buffer += chunk;
-                const lines = buffer.split('\n');
+                const lines = buffer.split('\n\n');
+                buffer = lines.pop();
 
-                lines.forEach(line => {
-                    if (line.startsWith('data:')) {
-                        try {
-                            const eventData = JSON.parse(line.substring(5).trim());
-                            if (eventData.reportUrl) {
-                                viewReportBtn.href = eventData.reportUrl;
-                                reportContainer.style.display = 'block';
-                            }
-                        } catch (e) {}
+                for (const line of lines) {
+                    if (line.includes('event:metric') || line.includes('event:complete') || line.startsWith('data:')) {
+                        const dataMatch = line.match(/data:(.*)/);
+                        if (dataMatch) {
+                            try {
+                                const metric = JSON.parse(dataMatch[1].trim());
+
+                                if (metric.successfulRequests !== undefined && liveChart) {
+                                    const timeStr = new Date(metric.timestamp || Date.now()).toLocaleTimeString();
+                                    liveChart.data.labels.push(timeStr);
+                                    liveChart.data.datasets[0].data.push(metric.successfulRequests);
+                                    liveChart.data.datasets[1].data.push(metric.failedRequests);
+                                    liveChart.data.datasets[2].data.push(metric.p50 || 0);
+                                    liveChart.data.datasets[3].data.push(metric.p90 || 0);
+                                    liveChart.data.datasets[4].data.push(metric.p99 || 0);
+                                    liveChart.update();
+                                }
+
+                                if (metric.reportId || metric.reportUrl || metric.status === 'COMPLETED') {
+                                    statusBadge.innerText = 'Completed';
+                                    statusBadge.className = 'status-badge status-complete';
+                                    if (metric.reportUrl) {
+                                        viewReportBtn.href = metric.reportUrl;
+                                    }
+                                    if (metric.reportId) {
+                                        await loadEmbeddedReport(metric.reportId, metric.reportUrl);
+                                    } else {
+                                        reportContainer.style.display = 'block';
+                                    }
+                                }
+                            } catch (e) {}
+                        }
                     }
-                });
+                }
             }
         } catch (err) {
-            metricsLog.innerText += `\n[ERROR] ${err.message}`;
+            if (err.name !== 'AbortError') {
+                console.error("Stream error:", err);
+                metricsLog.innerText += `\n[ERROR] ${err.message}`;
+                statusBadge.innerText = 'Failed';
+                statusBadge.className = 'status-badge';
+            }
+        } finally {
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+        }
+    }
+
+    async function stopTest() {
+        await fetch('/api/v1/load/stop', { method: 'POST' });
+        if (abortController) abortController.abort();
+        const statusBadge = document.getElementById('status-badge');
+        statusBadge.innerText = 'Stopped';
+        statusBadge.className = 'status-badge';
+        document.getElementById('start-btn').disabled = false;
+        document.getElementById('stop-btn').disabled = true;
+    }
+
+    async function loadEmbeddedReport(reportId, reportUrl) {
+        try {
+            const response = await fetch(`/api/v1/reports/${reportId}`);
+            if (!response.ok) return;
+
+            const report = await response.json();
+            document.getElementById('rep-total').innerText = report.totalRequests.toLocaleString();
+            document.getElementById('rep-rps').innerText = report.requestsPerSecond.toFixed(2);
+            document.getElementById('rep-p95').innerText = `${report.overallP95LatencyMs.toFixed(2)} ms`;
+            document.getElementById('rep-errors').innerText = report.totalErrors.toLocaleString();
+
+            const badge = document.getElementById('summary-badge');
+            badge.innerText = report.passedThresholds ? 'PASSED THRESHOLDS' : 'FAILED THRESHOLDS';
+            badge.className = `badge ${report.passedThresholds ? 'pass' : 'fail'}`;
+
+            if (reportUrl) {
+                document.getElementById('viewReportBtn').href = reportUrl;
+            }
+            document.getElementById('reportContainer').style.display = 'block';
+        } catch (e) {
+            console.error("Failed to load embedded summary report", e);
+            document.getElementById('reportContainer').style.display = 'block';
         }
     }
 </script>

@@ -34,50 +34,92 @@ public class HarParserStrategy implements StressConfigParserStrategy {
                     HarInputDto.Request req = entry.request();
                     if (req == null || req.url() == null) continue;
 
-                    // Filter static assets
-                    if (req.url().matches(".*\\.(css|js|png|jpg|jpeg|gif|svg|woff2|ico)$")) continue;
+                    if (isStaticAsset(req.url())) {
+                        continue;
+                    }
 
                     URI uri = new URI(req.url());
-                    if (baseUrl.isEmpty()) {
-                        baseUrl = uri.getScheme() + "://" + uri.getAuthority();
-                    }
-
-                    Map<String, String> headers = new HashMap<>();
-                    if (req.headers() != null) {
-                        req.headers().forEach(h -> {
-                            if (!h.name().startsWith(":")) {
-                                headers.put(h.name(), h.value());
-                            }
-                        });
-                    }
-
-                    Map<String, String> params = new HashMap<>();
-                    if (req.queryString() != null) {
-                        req.queryString().forEach(q -> params.put(q.name(), q.value()));
-                    }
-
-                    scenarios.add(new ScenarioConfig(
-                        req.method() + " " + uri.getPath(),
-                        req.method(),
-                        uri.getPath(),
-                        1,
-                        headers,
-                        params,
-                        req.postData() != null ? req.postData().text() : null,
-                        true
-                    ));
+                    baseUrl = extractBaseUrlIfEmpty(baseUrl, req.url());
+                    scenarios.add(mapToScenario(req, uri));
                 }
             }
 
             return new StressConfig(
-                "Imported HAR Blueprint",
-                baseUrl,
-                new ExecutionSettings(50, 30, 5),
-                scenarios,
-                new Thresholds(200, 500, 1.0)
+                    "Imported HAR Blueprint",
+                    baseUrl,
+                    new ExecutionSettings(50, 30, 5),
+                    scenarios,
+                    new Thresholds(200, 500, 1.0)
             );
         } catch (Exception e) {
             throw new RuntimeException("Failed to parse HAR input", e);
         }
+    }
+
+    private boolean isStaticAsset(String url) {
+        return url.matches(".*\\.(css|js|png|jpg|jpeg|gif|svg|woff|woff2|ico|ttf|eot)(\\?.*)?$");
+    }
+
+    private String extractBaseUrlIfEmpty(String currentBaseUrl, String requestUrl) {
+        if (currentBaseUrl == null || currentBaseUrl.isEmpty()) {
+            try {
+                URI uri = new URI(requestUrl);
+                return uri.getScheme() + "://" + uri.getAuthority();
+            } catch (Exception e) {
+                return currentBaseUrl;
+            }
+        }
+        return currentBaseUrl;
+    }
+
+    private ScenarioConfig mapToScenario(HarInputDto.Request req, URI uri) {
+        Map<String, String> headers = extractSanitizedHeaders(req);
+
+        Map<String, String> params = new HashMap<>();
+        if (req.queryString() != null) {
+            req.queryString().forEach(q -> params.put(q.name(), q.value()));
+        }
+
+        return new ScenarioConfig(
+                req.method() + " " + uri.getPath(),
+                req.method(),
+                uri.getPath(),
+                1,
+                headers,
+                params,
+                req.postData() != null ? req.postData().text() : null,
+                true
+        );
+    }
+
+    private Map<String, String> extractSanitizedHeaders(HarInputDto.Request req) {
+        Map<String, String> headers = new HashMap<>();
+        if (req.headers() != null) {
+            req.headers().forEach(h -> {
+                String name = h.name();
+                if (name != null && !name.startsWith(":") && !isRestrictedHeader(name)) {
+                    headers.put(name, h.value());
+                }
+            });
+        }
+        return headers;
+    }
+
+    /**
+     * Checks if a header name is restricted by Java's HttpClient.
+     * Transport-level headers like Connection, Content-Length, Host, etc.,
+     * must be managed automatically by the HTTP engine.
+     */
+    private boolean isRestrictedHeader(String headerName) {
+        if (headerName == null) {
+            return true;
+        }
+        String lower = headerName.trim().toLowerCase();
+        return lower.equals("connection") ||
+                lower.equals("content-length") ||
+                lower.equals("host") ||
+                lower.equals("upgrade") ||
+                lower.equals("expect") ||
+                lower.equals("transfer-encoding");
     }
 }
