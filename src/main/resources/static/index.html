@@ -18,6 +18,7 @@
         .form-group { margin-bottom: 12px; }
         label { display: block; font-weight: 600; margin-bottom: 6px; color: #94a3b8; font-size: 14px; }
         input[type="text"], input[type="number"], select { width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #334155; background: #0f172a; color: #f8fafc; font-size: 14px; }
+        input[type="checkbox"] { width: auto; transform: scale(1.2); cursor: pointer; }
         input:focus, select:focus { outline: none; border-color: #38bdf8; }
 
         button { background: #0284c7; color: white; border: none; padding: 10px 18px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 14px; transition: background 0.2s; }
@@ -96,7 +97,7 @@
             </div>
         </div>
 
-        <!-- Engine Selector Dropdown Added Here -->
+        <!-- Engine Selector Dropdown -->
         <div class="form-group" style="margin-top: 15px;">
             <label for="executionEngine">Execution Engine Framework</label>
             <select id="executionEngine">
@@ -109,7 +110,7 @@
         <table>
             <thead>
             <tr>
-                <th style="width: 40px;">Active</th>
+                <th style="width: 40px;"><input type="checkbox" id="selectAllEndpoints" checked> Active</th>
                 <th>Path Template</th>
                 <th>HTTP Method</th>
                 <th>Scenario Name</th>
@@ -201,6 +202,21 @@
                 }
             }
         });
+
+        // Master select/deselect all handlers for scenario active flag
+        document.getElementById('selectAllEndpoints').addEventListener('change', (e) => {
+            const isChecked = e.target.checked;
+            document.querySelectorAll('.endpoint-checkbox').forEach((cb, idx) => {
+                cb.checked = isChecked;
+                if (currentConfig && currentConfig.scenarios && currentConfig.scenarios[idx]) {
+                    currentConfig.scenarios[idx].active = isChecked;
+                    currentConfig.scenarios[idx].enabled = isChecked;
+                }
+            });
+            if (currentConfig) {
+                document.getElementById('configOutput').innerText = JSON.stringify(currentConfig, null, 2);
+            }
+        });
     });
 
     async function uploadAndParse() {
@@ -238,9 +254,15 @@
 
         if (config.scenarios && config.scenarios.length > 0) {
             config.scenarios.forEach((scenario, index) => {
+                // Respect both active and enabled flags coming from backend payload structures
+                const isChecked = scenario.active !== false && scenario.enabled !== false;
+                // Ensure default model reflects checked state
+                scenario.active = isChecked;
+                scenario.enabled = isChecked;
+
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
-                    <td><input type="checkbox" ${scenario.enabled !== false ? 'checked' : ''} onchange="toggleScenario(${index}, this.checked)"></td>
+                    <td><input type="checkbox" class="endpoint-checkbox" ${isChecked ? 'checked' : ''} onchange="toggleScenario(${index}, this.checked)"></td>
                     <td><code>${scenario.path}</code></td>
                     <td><strong>${scenario.method}</strong></td>
                     <td>${scenario.name || scenario.path}</td>
@@ -257,6 +279,7 @@
 
     function toggleScenario(index, isChecked) {
         if (currentConfig && currentConfig.scenarios[index]) {
+            currentConfig.scenarios[index].active = isChecked;
             currentConfig.scenarios[index].enabled = isChecked;
             document.getElementById('configOutput').innerText = JSON.stringify(currentConfig, null, 2);
         }
@@ -270,6 +293,15 @@
         currentConfig.execution.concurrency = parseInt(document.getElementById('concurrency').value, 10);
         currentConfig.execution.durationSeconds = parseInt(document.getElementById('durationSeconds').value, 10);
         currentConfig.execution.engine = document.getElementById('executionEngine').value;
+
+        // Force-sync table checkbox states into currentConfig scenarios
+        const checkboxes = document.querySelectorAll('.endpoint-checkbox');
+        checkboxes.forEach((cb, index) => {
+            if (currentConfig.scenarios && currentConfig.scenarios[index]) {
+                currentConfig.scenarios[index].active = cb.checked;
+                currentConfig.scenarios[index].enabled = cb.checked;
+            }
+        });
     }
 
     async function downloadYaml() {

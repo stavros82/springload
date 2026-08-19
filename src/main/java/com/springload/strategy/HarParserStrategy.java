@@ -37,6 +37,9 @@ public class HarParserStrategy implements StressConfigParserStrategy {
                     if (isStaticAsset(req.url())) {
                         continue;
                     }
+                    if (entry.active() != null && !entry.active()) {
+                        continue;
+                    }
 
                     URI uri = new URI(req.url());
                     baseUrl = extractBaseUrlIfEmpty(baseUrl, req.url());

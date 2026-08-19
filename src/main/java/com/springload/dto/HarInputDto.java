@@ -9,15 +9,15 @@ public record HarInputDto(Log log) {
     public record Log(List<Entry> entries) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record Entry(Request request, Response response) {}
+    public record Entry(Request request, Response response, Boolean active) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record Request(
-        String method, 
-        String url, 
-        List<Header> headers, 
-        List<QueryParam> queryString, 
-        PostData postData
+            String method,
+            String url,
+            List<Header> headers,
+            List<QueryParam> queryString,
+            PostData postData
     ) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)

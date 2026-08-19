@@ -37,16 +37,25 @@ public class ReportService {
                             && errorPercentage <= config.thresholds().maxErrorPercentage();
         }
 
+
         List<ScenarioSummary> scenarioSummaries = new ArrayList<>();
         if (config.scenarios() != null && !config.scenarios().isEmpty()) {
-            int scenarioCount = config.scenarios().size();
-            config.scenarios().forEach(s -> scenarioSummaries.add(new ScenarioSummary(
-                    s.name(), s.method(), s.path(), 
-                    totalRequests / scenarioCount,
-                    successCount / scenarioCount,
-                    errorCount / scenarioCount,
-                    p50, p95, p99, errorPercentage
-            )));
+            // Safely check if enabled is true (treating null as true by default)
+            var activeScenarios = config.scenarios().stream()
+                    .filter(s ->  s.enabled())
+                    .toList();
+
+            int scenarioCount = activeScenarios.size();
+
+            if (scenarioCount > 0) {
+                activeScenarios.forEach(s -> scenarioSummaries.add(new ScenarioSummary(
+                        s.name(), s.method(), s.path(),
+                        totalRequests / scenarioCount,
+                        successCount / scenarioCount,
+                        errorCount / scenarioCount,
+                        p50, p95, p99, errorPercentage
+                )));
+            }
         }
 
         TestReport report = new TestReport(
