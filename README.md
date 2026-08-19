@@ -70,7 +70,7 @@ The `stress.yaml` file acts as the declarative blueprint for load tests. The Spr
 
 ## 📓 Notebook Reference
 
-Detailed documentation, chat histories, and development context for this project can be found in the **Load test** notebook [cite: 6]. [Link to Notebook](#https://gemini.google.com/notebook/ca5ea6a1-a464-43d1-9c8e-1b1d1aa67e07)
+Detailed documentation, chat histories, and development context for this project can be found in the **Load test** notebook [Visit Notebook](https://www.google.com](https://gemini.google.com/notebook/ca5ea6a1-a464-43d1-9c8e-1b1d1aa67e07) "Load Test Gemini Notebook") 
 
 ---
 *Developed and maintained by Stavros Nicolaou | Larnaca, Cyprus*
