@@ -68,9 +68,10 @@ The `stress.yaml` file acts as the declarative blueprint for load tests. The Spr
 2.  **Concurrency Load Test (Medium Load):** 200 virtual threads/users. Measure thread contention, HikariCP database connection pool wait times, and p95/p99 tail latency spikes.
 3.  **Breaking Point / Spike Test (High Load):** 1,000+ concurrent connections. Observe `HTTP 503 Service Unavailable` or `SocketTimeoutException` errors as the target Spring app exhausts resource pools.
 
+
 ## 📊 Repository Traffic
 <!-- CLONE_STATS_START -->
-**14-Day Clones:** 9 | **Unique Cloners:** 8 *(Last Updated: 2026-08-21 00:55 UTC)*
+**All-Time Clones:** Calculating...
 <!-- CLONE_STATS_END -->
 
 ---

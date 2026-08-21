@@ -1,12 +1,12 @@
-name: Daily Clone Tracker
+name: Daily All-Time Clone Tracker
 
 on:
   schedule:
-    - cron: '0 0 * * *'  # Runs every day at midnight UTC
-  workflow_dispatch:      # Allows manual trigger from GitHub Actions tab
+    - cron: '0 0 * * *'  # Runs automatically every day at 00:00 UTC
+  workflow_dispatch:      # Allows manual runs from the GitHub Actions tab
 
 jobs:
-  update-clones:
+  track-clones:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -20,23 +20,24 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Fetch 14-Day Traffic & Update All-Time History
+      - name: Fetch Clone Stats & Update History
         env:
           GH_TOKEN: ${{ secrets.TRAFFIC_TOKEN }}
           REPO: ${{ github.repository }}
         run: |
-          # 1. Fetch current traffic from GitHub REST API
+          # 1. Fetch rolling 14-day traffic from GitHub API
           gh api "repos/$REPO/traffic/clones" > latest_traffic.json
 
-          # 2. Process data and update history + README via Python
+          # 2. Process data, merge into history JSON, calculate total, and rewrite README
           python3 -c "
           import json, os, re
+          from datetime import datetime, timezone
 
-          # Load latest API data
+          # Load API response
           with open('latest_traffic.json', 'r') as f:
-              latest_data = json.load(f).get('clones', [])
+              latest_api = json.load(f)
 
-          # Load existing historical record if it exists
+          # Load or initialize history file
           history_file = 'clones_history.json'
           if os.path.exists(history_file):
               with open(history_file, 'r') as f:
@@ -44,33 +45,45 @@ jobs:
           else:
               history = {}
 
-          # Merge new daily data keyed by YYYY-MM-DD (prevents double-counting)
-          for day in latest_data:
+          # Store daily clone counts by date key (prevents duplicates)
+          for day in latest_api.get('clones', []):
               date_key = day['timestamp'][:10]
               history[date_key] = {
                   'count': day['count'],
                   'uniques': day['uniques']
               }
 
-          # Save updated historical JSON
+          # Save updated historical JSON database
           with open(history_file, 'w') as f:
               json.dump(history, f, indent=2)
 
-          # Calculate total sum across all days stored
-          total_clones = sum(item['count'] for item in history.values())
-          total_uniques = sum(item['uniques'] for item in history.values())
+          # Calculate total all-time clones across all saved dates
+          all_time_clones = sum(item['count'] for item in history.values())
+          all_time_uniques = sum(item['uniques'] for item in history.values())
 
-          # Format replacement text
-          stats_text = f'<!-- CLONES_START -->\n* **All-Time Clones:** {total_clones:,}\n* **All-Time Unique Cloners:** {total_uniques:,}\n<!-- CLONES_END -->'
+          # Format replacement text for README
+          now_utc = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
+          stats_text = (
+              '<!-- CLONE_STATS_START -->\n'
+              f'**All-Time Clones:** {all_time_clones:,} | **All-Time Unique Cloners:** {all_time_uniques:,} '
+              f'*(Last Updated: {now_utc})*\n'
+              '<!-- CLONE_STATS_END -->'
+          )
 
-          # Update README.md
-          with open('README.md', 'r') as f:
-              readme = f.read()
+          # Update README.md between target tags
+          if os.path.exists('README.md'):
+              with open('README.md', 'r') as f:
+                  readme = f.read()
 
-          if '<!-- CLONES_START -->' in readme:
-              updated_readme = re.sub(r'<!-- CLONES_START -->.*?<!-- CLONES_END -->', stats_text, readme, flags=re.DOTALL)
-              with open('README.md', 'w') as f:
-                  f.write(updated_readme)
+              if '<!-- CLONE_STATS_START -->' in readme:
+                  updated_readme = re.sub(
+                      r'<!-- CLONE_STATS_START -->.*?<!-- CLONE_STATS_END -->',
+                      stats_text,
+                      readme,
+                      flags=re.DOTALL
+                  )
+                  with open('README.md', 'w') as f:
+                      f.write(updated_readme)
           "
 
       - name: Commit and Push Updates
@@ -78,5 +91,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add clones_history.json README.md
-          git commit -m "chart: update daily all-time clone statistics [skip ci]" || exit 0
+          git commit -m "docs: update all-time clone statistics [skip ci]" || exit 0
           git push
