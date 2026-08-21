@@ -70,7 +70,7 @@ The `stress.yaml` file acts as the declarative blueprint for load tests. The Spr
 
 ## 📊 Repository Traffic
 <!-- CLONE_STATS_START -->
-**14-Day Clones:** 0 | **Unique Cloners:** 0 *(Last Updated: 2026-08-20 00:51 UTC)*
+**14-Day Clones:** 9 | **Unique Cloners:** 8 *(Last Updated: 2026-08-21 00:55 UTC)*
 <!-- CLONE_STATS_END -->
 
 ---
