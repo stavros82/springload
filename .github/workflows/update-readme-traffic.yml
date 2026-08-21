@@ -1,12 +1,12 @@
-name: Daily README Traffic Update
+name: Daily Clone Tracker
 
 on:
   schedule:
-    - cron: '0 0 * * *' # Midnight UTC
-  workflow_dispatch:
+    - cron: '0 0 * * *'  # Runs every day at midnight UTC
+  workflow_dispatch:      # Allows manual trigger from GitHub Actions tab
 
 jobs:
-  update-readme:
+  update-clones:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -15,31 +15,68 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Fetch Clone Stats & Inject into README
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Fetch 14-Day Traffic & Update All-Time History
         env:
           GH_TOKEN: ${{ secrets.TRAFFIC_TOKEN }}
+          REPO: ${{ github.repository }}
         run: |
-          # Query GitHub API for 14-day clone data
-          RESPONSE=$(gh api -H "Accept: application/vnd.github+json" /repos/${{ github.repository }}/traffic/clones)
-          
-          TOTAL_CLONES=$(echo "$RESPONSE" | jq -r '.count')
-          UNIQUE_CLONERS=$(echo "$RESPONSE" | jq -r '.uniques')
-          LAST_UPDATED=$(date -u +'%Y-%m-%d %H:%M UTC')
+          # 1. Fetch current traffic from GitHub REST API
+          gh api "repos/$REPO/traffic/clones" > latest_traffic.json
 
-          # Construct markdown string
-          STATS_TEXT="**14-Day Clones:** ${TOTAL_CLONES} | **Unique Cloners:** ${UNIQUE_CLONERS} *(Last Updated: ${LAST_UPDATED})*"
+          # 2. Process data and update history + README via Python
+          python3 -c "
+          import json, os, re
 
-          # Inject or append into README.md
-          if grep -q "<!-- CLONE_STATS_START -->" README.md; then
-            sed -i "/<!-- CLONE_STATS_START -->/,/<!-- CLONE_STATS_END -->/c\<!-- CLONE_STATS_START -->\n${STATS_TEXT}\n<!-- CLONE_STATS_END -->" README.md
-          else
-            echo -e "\n## 📊 Repository Traffic\n<!-- CLONE_STATS_START -->\n${STATS_TEXT}\n<!-- CLONE_STATS_END -->" >> README.md
-          fi
+          # Load latest API data
+          with open('latest_traffic.json', 'r') as f:
+              latest_data = json.load(f).get('clones', [])
 
-      - name: Commit and Push README Changes
+          # Load existing historical record if it exists
+          history_file = 'clones_history.json'
+          if os.path.exists(history_file):
+              with open(history_file, 'r') as f:
+                  history = json.load(f)
+          else:
+              history = {}
+
+          # Merge new daily data keyed by YYYY-MM-DD (prevents double-counting)
+          for day in latest_data:
+              date_key = day['timestamp'][:10]
+              history[date_key] = {
+                  'count': day['count'],
+                  'uniques': day['uniques']
+              }
+
+          # Save updated historical JSON
+          with open(history_file, 'w') as f:
+              json.dump(history, f, indent=2)
+
+          # Calculate total sum across all days stored
+          total_clones = sum(item['count'] for item in history.values())
+          total_uniques = sum(item['uniques'] for item in history.values())
+
+          # Format replacement text
+          stats_text = f'<!-- CLONES_START -->\n* **All-Time Clones:** {total_clones:,}\n* **All-Time Unique Cloners:** {total_uniques:,}\n<!-- CLONES_END -->'
+
+          # Update README.md
+          with open('README.md', 'r') as f:
+              readme = f.read()
+
+          if '<!-- CLONES_START -->' in readme:
+              updated_readme = re.sub(r'<!-- CLONES_START -->.*?<!-- CLONES_END -->', stats_text, readme, flags=re.DOTALL)
+              with open('README.md', 'w') as f:
+                  f.write(updated_readme)
+          "
+
+      - name: Commit and Push Updates
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add README.md
-          git commit -m "chore(docs): update midnight clone metrics in README [skip ci]" || exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add clones_history.json README.md
+          git commit -m "chart: update daily all-time clone statistics [skip ci]" || exit 0
           git push

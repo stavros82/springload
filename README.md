@@ -73,4 +73,6 @@ The `stress.yaml` file acts as the declarative blueprint for load tests. The Spr
 <!-- CLONE_STATS_END -->
 
 ---
+[Explore this project in Gemini Notebook](https://notebook.google.com/notebook/b6806e2b-7226-4b8a-abf7-9687dd9aba4f)
+
 *Developed and maintained by Stavros Nicolaou | Larnaca, Cyprus*
