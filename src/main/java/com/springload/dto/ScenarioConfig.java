@@ -10,5 +10,6 @@ public record ScenarioConfig(
     Map<String, String> headers,
     Map<String, String> queryParams,
     String body,
-    boolean enabled
+    boolean enabled,
+    Map<String, String> extractedVariables
 ) {}
