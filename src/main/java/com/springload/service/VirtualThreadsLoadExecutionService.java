@@ -2,7 +2,7 @@ package com.springload.service;
 
 import com.springload.dto.ScenarioConfig;
 import com.springload.dto.StressConfig;
-import com.springload.dto.TestReport;
+import com.springload.util.DynamicVariableResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -16,21 +16,18 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 @Service
 @Qualifier("virtualThreadEngine")
 public class VirtualThreadsLoadExecutionService implements LoadExecutionService {
 
     private static final Logger log = LoggerFactory.getLogger(VirtualThreadsLoadExecutionService.class);
-    private static final Pattern PATH_VARIABLE_PATTERN = Pattern.compile("\\{([^}]+)\\}");
-
     private final HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(5))
             .build();
@@ -40,6 +37,16 @@ public class VirtualThreadsLoadExecutionService implements LoadExecutionService 
     public VirtualThreadsLoadExecutionService(ReportService reportService) {
         this.reportService = reportService;
     }
+
+    private record MetricsContext(
+            SseEmitter emitter,
+            StressConfig config,
+            LocalDateTime startTime,
+            long endTimeMillis,
+            AtomicLong requestCounter,
+            AtomicLong errorCounter,
+            List<Long> latencies
+    ) {}
 
     @Override
     public SseEmitter executeTest(StressConfig config) {
@@ -51,7 +58,7 @@ public class VirtualThreadsLoadExecutionService implements LoadExecutionService 
         AtomicLong errorCounter = new AtomicLong();
         List<Long> latencies = new CopyOnWriteArrayList<>();
 
-        LocalDateTime startTime = LocalDateTime.now();
+        LocalDateTime startTime = LocalDateTime.now(ZoneId.systemDefault());
         long startMillis = System.currentTimeMillis();
         long endTime = startMillis + (config.execution().durationSeconds() * 1000L);
 
@@ -64,10 +71,10 @@ public class VirtualThreadsLoadExecutionService implements LoadExecutionService 
     private void startVirtualThreadExecutor(StressConfig config, long endTime,
                                             AtomicLong requestCounter, AtomicLong errorCounter,
                                             List<Long> latencies) {
-        Thread.ofVirtual().name("load-generator-", 0).start(() -> {
+        Thread.ofPlatform().name("load-generator-", 0).start(() -> {
             try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
                 config.scenarios().stream()
-                        .filter(ScenarioConfig::enabled)
+                        .filter(s -> s.enabled() && s.isActive())
                         .forEach(scenario -> submitScenarioTasks(scenario, config, endTime, executor, requestCounter, errorCounter, latencies));
             }
         });
@@ -87,18 +94,23 @@ public class VirtualThreadsLoadExecutionService implements LoadExecutionService 
                                      AtomicLong requestCounter, AtomicLong errorCounter,
                                      List<Long> latencies) {
         while (System.currentTimeMillis() < endTime) {
-            String resolvedPath = resolvePathVariables(scenario.path());
+            String resolvedPath = DynamicVariableResolver.resolve(scenario.path());
             String fullUrl = baseUrl + resolvedPath;
             String method = scenario.method().toUpperCase();
+            var resolvedHeaders = DynamicVariableResolver.resolveHeaders(scenario.headers());
+            String resolvedBody = DynamicVariableResolver.resolve(scenario.body());
 
             try {
-                HttpRequest request = buildHttpRequest(scenario, fullUrl, method);
+                HttpRequest request = buildHttpRequest(resolvedHeaders, resolvedBody, fullUrl, method);
                 long reqStart = System.currentTimeMillis();
                 HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
                 long reqDuration = System.currentTimeMillis() - reqStart;
 
                 latencies.add(reqDuration);
                 handleResponse(response, method, fullUrl, reqDuration, requestCounter, errorCounter);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
             } catch (Exception e) {
                 long currentErrors = errorCounter.incrementAndGet();
                 log.error("EXECUTION ERROR dispatching to {} {}: {} (Total Errors: {})",
@@ -107,17 +119,17 @@ public class VirtualThreadsLoadExecutionService implements LoadExecutionService 
         }
     }
 
-    private HttpRequest buildHttpRequest(ScenarioConfig scenario, String fullUrl, String method) {
+    private HttpRequest buildHttpRequest(Map<String, String> headers, String body, String fullUrl, String method) {
         HttpRequest.Builder builder = HttpRequest.newBuilder()
                 .uri(URI.create(fullUrl))
                 .timeout(Duration.ofSeconds(5));
 
-        if (scenario.headers() != null) {
-            scenario.headers().forEach(builder::header);
+        if (headers != null) {
+            headers.forEach(builder::header);
         }
 
-        HttpRequest.BodyPublisher bodyPublisher = (scenario.body() != null && !scenario.body().isBlank())
-                ? HttpRequest.BodyPublishers.ofString(scenario.body())
+        HttpRequest.BodyPublisher bodyPublisher = (body != null && !body.isBlank())
+                ? HttpRequest.BodyPublishers.ofString(body)
                 : HttpRequest.BodyPublishers.noBody();
 
         return switch (method) {
@@ -158,60 +170,81 @@ public class VirtualThreadsLoadExecutionService implements LoadExecutionService 
                                         LocalDateTime startTime, long endTime,
                                         AtomicLong requestCounter, AtomicLong errorCounter,
                                         List<Long> latencies) {
-        // Create a single-threaded scheduled executor without blocking the main thread via latch.await()
-        ScheduledExecutorService metricScheduler = Executors.newSingleThreadScheduledExecutor();
+        MetricsContext context = new MetricsContext(
+                emitter, config, startTime, endTime, requestCounter, errorCounter, latencies);
 
-        metricScheduler.scheduleAtFixedRate(() -> {
-            try {
-                long now = System.currentTimeMillis();
-                if (now >= endTime) {
-                    handleTestCompletion(emitter, config, startTime, endTime, requestCounter, errorCounter, latencies, metricScheduler);
-                    return;
+        Thread.ofPlatform().name("metrics-emitter").start(() -> {
+            CountDownLatch finished = new CountDownLatch(1);
+            Runnable finishMetrics = finished::countDown;
+            emitter.onCompletion(finishMetrics);
+            emitter.onTimeout(finishMetrics);
+            emitter.onError(e -> finishMetrics.run());
+
+            try (ScheduledExecutorService metricScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread thread = new Thread(r, "metrics-emitter-worker");
+                thread.setDaemon(true);
+                return thread;
+            })) {
+                metricScheduler.scheduleAtFixedRate(() -> {
+                    try {
+                        long now = System.currentTimeMillis();
+                        if (now >= endTime) {
+                            handleTestCompletion(context);
+                            finishMetrics.run();
+                            return;
+                        }
+                        sendProgressMetric(context, now);
+                    } catch (Exception e) {
+                        log.error("Error in metrics emitter task: {}", e.getMessage());
+                        finishMetrics.run();
+                    }
+                }, 1, 1, TimeUnit.SECONDS);
+
+                long waitMillis = Math.max(endTime - System.currentTimeMillis(), 0) + 5000;
+                if (!finished.await(waitMillis, TimeUnit.MILLISECONDS)) {
+                    log.warn("Metrics emitter timed out waiting for completion for test '{}'", config.name());
                 }
-                sendProgressMetric(emitter, now, endTime, requestCounter, errorCounter, metricScheduler);
-            } catch (Exception e) {
-                log.error("Error in metrics emitter task: {}", e.getMessage());
-                metricScheduler.shutdown();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                log.debug("Metrics emitter interrupted for test '{}'", config.name());
             }
-        }, 1, 1, TimeUnit.SECONDS);
+        });
     }
-    private void handleTestCompletion(SseEmitter emitter, StressConfig config,
-                                      LocalDateTime startTime, long endTime,
-                                      AtomicLong requestCounter, AtomicLong errorCounter,
-                                      List<Long> latencies, ScheduledExecutorService metricScheduler) {
+
+    private void handleTestCompletion(MetricsContext context) {
         try {
-            metricScheduler.shutdown();
             String reportId = UUID.randomUUID().toString();
-            TestReport report = reportService.generateReport(reportId, config, startTime, latencies, requestCounter.get(), errorCounter.get());
+            reportService.generateReport(
+                    reportId, context.config(), context.startTime(),
+                    context.latencies(), context.requestCounter().get(), context.errorCounter().get());
 
             log.info("Load test '{}' completed. Final Successes: {}, Final Errors: {}, Report ID: {}",
-                    config.name(), requestCounter.get(), errorCounter.get(), reportId);
+                    context.config().name(), context.requestCounter().get(),
+                    context.errorCounter().get(), reportId);
 
-            emitter.send(SseEmitter.event()
+            context.emitter().send(SseEmitter.event()
                     .name("complete")
                     .data(Map.of(
                             "message", "Test execution complete",
                             "reportId", reportId,
                             "reportUrl", "/report.html?id=" + reportId
                     )));
-            emitter.complete();
+            context.emitter().complete();
         } catch (Exception e) {
             log.error("Failed to send SSE complete event: {}", e.getMessage());
-            emitter.completeWithError(e);
+            context.emitter().completeWithError(e);
         }
     }
 
-    private void sendProgressMetric(SseEmitter emitter, long now, long endTime,
-                                    AtomicLong requestCounter, AtomicLong errorCounter,
-                                    ScheduledExecutorService metricScheduler) {
+    private void sendProgressMetric(MetricsContext context, long now) {
         try {
-            long totalSuccess = requestCounter.get();
-            long totalErrors = errorCounter.get();
+            long totalSuccess = context.requestCounter().get();
+            long totalErrors = context.errorCounter().get();
 
             log.info("[PROGRESS] Time remaining: {}s | Successes: {} | Errors: {}",
-                    (endTime - now) / 1000, totalSuccess, totalErrors);
+                    (context.endTimeMillis() - now) / 1000, totalSuccess, totalErrors);
 
-            emitter.send(SseEmitter.event()
+            context.emitter().send(SseEmitter.event()
                     .name("metric")
                     .data(Map.of(
                             "timestamp", now,
@@ -220,34 +253,8 @@ public class VirtualThreadsLoadExecutionService implements LoadExecutionService 
                     )));
         } catch (IOException e) {
             log.error("SSE Connection disconnected by client: {}", e.getMessage());
-            metricScheduler.shutdown();
-            emitter.completeWithError(e);
+            context.emitter().completeWithError(e);
         }
     }
 
-    private String resolvePathVariables(String path) {
-        if (path == null || !path.contains("{")) {
-            return path;
-        }
-
-        Matcher matcher = PATH_VARIABLE_PATTERN.matcher(path);
-        StringBuilder sb = new StringBuilder();
-
-        while (matcher.find()) {
-            String varName = matcher.group(1).toLowerCase();
-            String mockValue;
-
-            if (varName.contains("id") || varName.contains("amount") || varName.contains("quantity") || varName.contains("count")) {
-                mockValue = String.valueOf(ThreadLocalRandom.current().nextInt(1, 1000));
-            } else if (varName.contains("needed") || varName.contains("flag") || varName.contains("is") || varName.contains("active") || varName.contains("reorder")) {
-                mockValue = String.valueOf(ThreadLocalRandom.current().nextBoolean());
-            } else {
-                mockValue = "val_" + UUID.randomUUID().toString().substring(0, 5);
-            }
-
-            matcher.appendReplacement(sb, Matcher.quoteReplacement(mockValue));
-        }
-        matcher.appendTail(sb);
-        return sb.toString();
-    }
 }

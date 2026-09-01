@@ -21,8 +21,8 @@
         input[type="checkbox"] { width: auto; transform: scale(1.2); cursor: pointer; }
         input:focus, select:focus { outline: none; border-color: #38bdf8; }
 
-        button { background: #0284c7; color: white; border: none; padding: 10px 18px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 14px; transition: background 0.2s; }
-        button:hover { background: #0369a1; }
+        button { background: #0369a1; color: #ffffff; border: none; padding: 10px 18px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 14px; transition: background 0.2s; }
+        button:hover { background: #075985; }
         button.btn-export { background: #059669; }
         button.btn-export:hover { background: #047857; }
         button.btn-run { background: #16a34a; }
@@ -46,11 +46,37 @@
         .badge { display: inline-block; padding: 6px 12px; border-radius: 4px; font-size: 13px; font-weight: bold; }
         .pass { background: #15803d; color: #fff; }
         .fail { background: #b91c1c; color: #fff; }
-        .status-badge { padding: 4px 10px; border-radius: 4px; font-size: 12px; font-weight: bold; background: #334155; color: #94a3b8; }
-        .status-running { background: #0284c7; color: #fff; }
+        .status-badge { padding: 4px 10px; border-radius: 4px; font-size: 12px; font-weight: bold; background: #334155; color: #e2e8f0; }
+        .status-running { background: #0369a1; color: #ffffff; }
         .status-complete { background: #15803d; color: #fff; }
         .metric-box { background: #0f172a; padding: 16px; border-radius: 6px; text-align: center; border: 1px solid #334155; }
         .metric-val { font-size: 22px; font-weight: bold; color: #38bdf8; margin-top: 6px; }
+
+        /* Scenario Inspector Studio */
+        .scenario-card { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 16px; margin-bottom: 16px; transition: opacity 0.2s, border-color 0.2s; }
+        .scenario-card.inactive { opacity: 0.55; border-color: #1e293b; }
+        .scenario-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+        .scenario-card-title { display: flex; align-items: center; gap: 10px; }
+        .method-badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; background: #334155; color: #38bdf8; }
+        .toggle-switch { position: relative; display: inline-block; width: 44px; height: 24px; }
+        .toggle-switch input { opacity: 0; width: 0; height: 0; }
+        .toggle-slider { position: absolute; cursor: pointer; inset: 0; background: #475569; border-radius: 24px; transition: 0.2s; }
+        .toggle-slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: 0.2s; }
+        .toggle-switch input:checked + .toggle-slider { background: #16a34a; }
+        .toggle-switch input:checked + .toggle-slider:before { transform: translateX(20px); }
+        .weight-row { display: flex; align-items: center; gap: 12px; margin: 12px 0; }
+        .weight-row input[type="range"] { flex: 1; accent-color: #38bdf8; }
+        .weight-val { min-width: 42px; text-align: right; color: #38bdf8; font-weight: bold; }
+        .var-override { display: grid; grid-template-columns: 120px 140px 1fr; gap: 8px; align-items: center; margin-bottom: 8px; }
+        .var-override label.var-name { color: #94a3b8; font-size: 13px; margin: 0; }
+        textarea { width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #334155; background: #0f172a; color: #f8fafc; font-family: monospace; font-size: 13px; min-height: 70px; resize: vertical; }
+        textarea:focus { outline: none; border-color: #38bdf8; }
+        .validation-warning { color: #fbbf24; background: #422006; border: 1px solid #854d0e; padding: 10px 14px; border-radius: 6px; margin: 12px 0; font-size: 14px; display: none; }
+        .validation-warning.visible { display: block; }
+        .weight-summary { color: #94a3b8; font-size: 14px; margin-bottom: 8px; }
+        .weight-summary.valid { color: #4ade80; }
+        .weight-summary.invalid { color: #fbbf24; }
+        .card-section-label { font-size: 13px; color: #64748b; text-transform: uppercase; margin: 14px 0 6px; letter-spacing: 0.05em; }
     </style>
 </head>
 <body>
@@ -69,19 +95,26 @@
     <div class="card">
         <h3>1. Ingest Blueprint Source</h3>
         <div class="row">
-            <select id="parserType" style="flex: 1;">
-                <option value="HAR">Chrome / Firefox HAR (.har)</option>
-                <option value="SWAGGER" selected>OpenAPI / Swagger Specification (.json / .yaml)</option>
-                <option value="YAML">Existing stress.yaml File</option>
-            </select>
-            <input type="file" id="fileInput" style="flex: 1;" />
-            <button onclick="uploadAndParse()">Parse Blueprint</button>
+            <div class="form-group" style="flex: 1; margin-bottom: 0;">
+                <label for="parserType">Blueprint Format</label>
+                <select id="parserType">
+                    <option value="HAR">Chrome / Firefox HAR (.har)</option>
+                    <option value="SWAGGER" selected>OpenAPI / Swagger Specification (.json / .yaml)</option>
+                    <option value="YAML">Existing stress.yaml File</option>
+                </select>
+            </div>
+            <div class="form-group" style="flex: 1; margin-bottom: 0;">
+                <label for="fileInput">Specification File</label>
+                <input type="file" id="fileInput" />
+            </div>
+            <button onclick="uploadAndParse()" style="align-self: flex-end;">Parse Blueprint</button>
         </div>
     </div>
 
-    <!-- 2. Interactive Load Configuration & Scenarios Section -->
-    <div class="card" id="configCard" style="display: none;">
-        <h3>2. Configure Test Execution Settings</h3>
+    <!-- 2. Scenario Inspector Studio (revealed after successful parse) -->
+    <div class="card" id="scenario-studio" style="display: none;">
+        <h3>2. Scenario Inspector Studio</h3>
+
         <div class="grid-3">
             <div class="form-group">
                 <label for="targetBaseUrl">Target Base URL</label>
@@ -97,7 +130,6 @@
             </div>
         </div>
 
-        <!-- Engine Selector Dropdown -->
         <div class="form-group" style="margin-top: 15px;">
             <label for="executionEngine">Execution Engine Framework</label>
             <select id="executionEngine">
@@ -106,24 +138,18 @@
             </select>
         </div>
 
-        <h3>Inspected Scenarios</h3>
-        <table>
-            <thead>
-            <tr>
-                <th style="width: 40px;"><input type="checkbox" id="selectAllEndpoints" checked> Active</th>
-                <th>Path Template</th>
-                <th>HTTP Method</th>
-                <th>Scenario Name</th>
-            </tr>
-            </thead>
-            <tbody id="scenariosTableBody">
+        <div class="weight-summary" id="weightSummary">Active endpoint weights: 0% / 100%</div>
+        <div class="validation-warning" id="weightValidationWarning">
+            Active endpoint weights must sum to exactly 100% before launching or exporting.
+        </div>
+
+        <div id="scenario-cards">
             <!-- Populated dynamically upon file upload -->
-            </tbody>
-        </table>
+        </div>
 
         <div class="row">
-            <button class="btn-export" onclick="downloadYaml()">📥 Export as stress.yaml</button>
-            <button class="btn-run" id="start-btn" onclick="runTest()">▶ Execute Load Test</button>
+            <button class="btn-export" id="export-btn" onclick="downloadYaml()" disabled>📥 Export stress.yaml</button>
+            <button class="btn-run" id="start-btn" onclick="runTest()" disabled>▶ Launch Stress Test</button>
             <button class="btn-stop" id="stop-btn" onclick="stopTest()" disabled>⏹ Stop Test</button>
         </div>
 
@@ -171,8 +197,23 @@
     let currentConfig = null;
     let abortController = null;
     let liveChart = null;
+    /** @type {Map<number, { pathTemplate: string, variables: Record<string, { mode: string, staticValue: string, min: number, max: number }> }>} */
+    const scenarioUiState = new Map();
 
-    // Ensure Chart.js is properly initialized after DOM is fully loaded
+    function extractPathVariables(path) {
+        const vars = [];
+        if (!path) return vars;
+        let start = path.indexOf('{');
+        while (start !== -1) {
+            const end = path.indexOf('}', start + 1);
+            if (end === -1) break;
+            const varName = path.slice(start + 1, end);
+            if (varName && !vars.includes(varName)) vars.push(varName);
+            start = path.indexOf('{', end + 1);
+        }
+        return vars;
+    }
+
     window.addEventListener('DOMContentLoaded', () => {
         const canvas = document.getElementById('liveChart');
         if (!canvas) {
@@ -202,21 +243,6 @@
                 }
             }
         });
-
-        // Master select/deselect all handlers for scenario active flag
-        document.getElementById('selectAllEndpoints').addEventListener('change', (e) => {
-            const isChecked = e.target.checked;
-            document.querySelectorAll('.endpoint-checkbox').forEach((cb, idx) => {
-                cb.checked = isChecked;
-                if (currentConfig && currentConfig.scenarios && currentConfig.scenarios[idx]) {
-                    currentConfig.scenarios[idx].active = isChecked;
-                    currentConfig.scenarios[idx].enabled = isChecked;
-                }
-            });
-            if (currentConfig) {
-                document.getElementById('configOutput').innerText = JSON.stringify(currentConfig, null, 2);
-            }
-        });
     });
 
     async function uploadAndParse() {
@@ -235,13 +261,54 @@
             if (!res.ok) throw new Error(`Parse failed with HTTP ${res.status}`);
 
             currentConfig = await res.json();
-            renderConfigForm(currentConfig);
+            renderScenarioStudio(currentConfig);
         } catch (err) {
             alert(`Parsing error: ${err.message}`);
         }
     }
 
-    function renderConfigForm(config) {
+    function distributeWeights(scenarios) {
+        const active = scenarios.filter(s => s.active !== false && s.enabled !== false);
+        if (active.length === 0) return;
+        const base = Math.floor(100 / active.length);
+        let remainder = 100 - base * active.length;
+        active.forEach((s, i) => {
+            s.weight = base + (i < remainder ? 1 : 0);
+        });
+    }
+
+    function compileVariableValue(varState) {
+        if (varState.mode === 'static') return varState.staticValue || '1';
+        if (varState.mode === 'uuid') return '${random.uuid}';
+        if (varState.mode === 'random') {
+            const min = Number.parseInt(varState.min, 10) || 1;
+            const max = Number.parseInt(varState.max, 10) || 100;
+            return '${random(' + min + '-' + max + ')}';
+        }
+        return '1';
+    }
+
+    function compilePathFromTemplate(pathTemplate, variables) {
+        let compiled = pathTemplate;
+        Object.entries(variables).forEach(([name, varState]) => {
+            compiled = compiled.replaceAll(`{${name}}`, compileVariableValue(varState));
+        });
+        return compiled;
+    }
+
+    function initScenarioUiState(config) {
+        scenarioUiState.clear();
+        (config.scenarios || []).forEach((scenario, index) => {
+            const pathTemplate = scenario.path || '';
+            const variables = {};
+            extractPathVariables(pathTemplate).forEach(varName => {
+                variables[varName] = { mode: 'random', staticValue: '1', min: 1, max: 100 };
+            });
+            scenarioUiState.set(index, { pathTemplate, variables });
+        });
+    }
+
+    function renderScenarioStudio(config) {
         document.getElementById('targetBaseUrl').value = config.targetBaseUrl || 'http://localhost:8080';
         document.getElementById('concurrency').value = config.execution ? config.execution.concurrency : 20;
         document.getElementById('durationSeconds').value = config.execution ? config.execution.durationSeconds : 10;
@@ -249,40 +316,212 @@
             document.getElementById('executionEngine').value = config.execution.engine;
         }
 
-        const tbody = document.getElementById('scenariosTableBody');
-        tbody.innerHTML = '';
+        (config.scenarios || []).forEach(scenario => {
+            const isActive = scenario.active !== false && scenario.enabled !== false;
+            scenario.active = isActive;
+            scenario.enabled = isActive;
+        });
+        distributeWeights(config.scenarios || []);
+        initScenarioUiState(config);
 
-        if (config.scenarios && config.scenarios.length > 0) {
-            config.scenarios.forEach((scenario, index) => {
-                // Respect both active and enabled flags coming from backend payload structures
-                const isChecked = scenario.active !== false && scenario.enabled !== false;
-                // Ensure default model reflects checked state
-                scenario.active = isChecked;
-                scenario.enabled = isChecked;
+        const container = document.getElementById('scenario-cards');
+        container.innerHTML = '';
 
-                const tr = document.createElement('tr');
-                tr.innerHTML = `
-                    <td><input type="checkbox" class="endpoint-checkbox" ${isChecked ? 'checked' : ''} onchange="toggleScenario(${index}, this.checked)"></td>
-                    <td><code>${scenario.path}</code></td>
-                    <td><strong>${scenario.method}</strong></td>
-                    <td>${scenario.name || scenario.path}</td>
-                `;
-                tbody.appendChild(tr);
-            });
+        if (!config.scenarios || config.scenarios.length === 0) {
+            container.innerHTML = '<p style="color: #94a3b8; text-align: center;">No scenarios detected in spec file</p>';
         } else {
-            tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: #94a3b8;">No scenarios detected in spec file</td></tr>';
+            config.scenarios.forEach((scenario, index) => {
+                container.appendChild(buildScenarioCard(scenario, index));
+            });
         }
 
+        updateWeightValidation();
+        syncCompiledPaths();
         document.getElementById('configOutput').innerText = JSON.stringify(config, null, 2);
-        document.getElementById('configCard').style.display = 'block';
+        document.getElementById('scenario-studio').style.display = 'block';
     }
 
-    function toggleScenario(index, isChecked) {
-        if (currentConfig && currentConfig.scenarios[index]) {
-            currentConfig.scenarios[index].active = isChecked;
-            currentConfig.scenarios[index].enabled = isChecked;
-            document.getElementById('configOutput').innerText = JSON.stringify(currentConfig, null, 2);
+    function buildScenarioCard(scenario, index) {
+        const uiState = scenarioUiState.get(index);
+        const isActive = scenario.active !== false;
+        const card = document.createElement('div');
+        card.className = `scenario-card${isActive ? '' : ' inactive'}`;
+        card.dataset.index = index;
+
+        const pathVars = extractPathVariables(uiState.pathTemplate);
+        let varOverridesHtml = '';
+        if (pathVars.length > 0) {
+            varOverridesHtml = '<div class="card-section-label">Path Variable Overrides</div>';
+            pathVars.forEach(varName => {
+                const varState = uiState.variables[varName];
+                varOverridesHtml += `
+                    <div class="var-override" data-var="${varName}">
+                        <label class="var-name">{${varName}}</label>
+                        <select class="var-mode" onchange="onVarModeChange(${index}, '${varName}', this.value)">
+                            <option value="static" ${varState.mode === 'static' ? 'selected' : ''}>Static Value</option>
+                            <option value="random" ${varState.mode === 'random' ? 'selected' : ''}>Random Range</option>
+                            <option value="uuid" ${varState.mode === 'uuid' ? 'selected' : ''}>UUID</option>
+                        </select>
+                        <div class="var-value-input">${renderVarValueInput(index, varName, varState)}</div>
+                    </div>`;
+            });
         }
+
+        const headersJson = JSON.stringify(scenario.headers || {}, null, 2);
+        const bodyText = scenario.body || '';
+
+        card.innerHTML = `
+            <div class="scenario-card-header">
+                <div class="scenario-card-title">
+                    <span class="method-badge">${scenario.method}</span>
+                    <strong>${scenario.name || scenario.path}</strong>
+                </div>
+                <label class="toggle-switch" title="Active">
+                    <input type="checkbox" class="scenario-active-toggle" ${isActive ? 'checked' : ''}
+                           onchange="toggleScenarioActive(${index}, this.checked)">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div><code class="compiled-path">${uiState.pathTemplate}</code></div>
+            <div class="weight-row scenario-weight-row" style="${isActive ? '' : 'display:none;'}">
+                <label style="margin:0; min-width:60px;">Weight</label>
+                <input type="range" min="0" max="100" value="${scenario.weight || 0}"
+                       class="weight-slider" oninput="onWeightChange(${index}, this.value)">
+                <span class="weight-val">${scenario.weight || 0}%</span>
+            </div>
+            ${varOverridesHtml}
+            <div class="card-section-label">HTTP Headers (JSON)</div>
+            <textarea class="headers-editor" oninput="onHeadersChange(${index}, this.value)">${headersJson}</textarea>
+            <div class="card-section-label">Request Body (JSON)</div>
+            <textarea class="body-editor" oninput="onBodyChange(${index}, this.value)">${bodyText}</textarea>
+        `;
+        return card;
+    }
+
+    function renderVarValueInput(index, varName, varState) {
+        if (varState.mode === 'static') {
+            return `<input type="text" value="${varState.staticValue || '1'}" placeholder="e.g. 101"
+                oninput="onVarStaticChange(${index}, '${varName}', this.value)">`;
+        }
+        if (varState.mode === 'uuid') {
+            return '<code>${random.uuid}</code>';
+        }
+        return `<span style="display:flex; gap:6px; align-items:center;">
+            <input type="number" min="0" value="${varState.min ?? 1}" style="width:70px"
+                oninput="onVarRangeChange(${index}, '${varName}', 'min', this.value)">
+            <span>–</span>
+            <input type="number" min="0" value="${varState.max ?? 100}" style="width:70px"
+                oninput="onVarRangeChange(${index}, '${varName}', 'max', this.value)">
+            <code style="font-size:12px;">${'${random('}${varState.min ?? 1}-${varState.max ?? 100})}</code>
+        </span>`;
+    }
+
+    function refreshScenarioCard(index) {
+        if (!currentConfig || !currentConfig.scenarios[index]) return;
+        const container = document.getElementById('scenario-cards');
+        const existing = container.querySelector(`.scenario-card[data-index="${index}"]`);
+        const newCard = buildScenarioCard(currentConfig.scenarios[index], index);
+        if (existing) existing.replaceWith(newCard);
+    }
+
+    function toggleScenarioActive(index, isActive) {
+        if (!currentConfig || !currentConfig.scenarios[index]) return;
+        currentConfig.scenarios[index].active = isActive;
+        currentConfig.scenarios[index].enabled = isActive;
+        distributeWeights(currentConfig.scenarios);
+        currentConfig.scenarios.forEach((_, i) => refreshScenarioCard(i));
+        syncCompiledPaths();
+        updateWeightValidation();
+    }
+
+    function onWeightChange(index, value) {
+        if (!currentConfig || !currentConfig.scenarios[index]) return;
+        currentConfig.scenarios[index].weight = Number.parseInt(value, 10);
+        const card = document.querySelector(`.scenario-card[data-index="${index}"]`);
+        if (card) card.querySelector('.weight-val').innerText = `${value}%`;
+        updateWeightValidation();
+    }
+
+    function onVarModeChange(index, varName, mode) {
+        const uiState = scenarioUiState.get(index);
+        if (!uiState) return;
+        uiState.variables[varName].mode = mode;
+        refreshScenarioCard(index);
+        syncCompiledPaths();
+    }
+
+    function onVarStaticChange(index, varName, value) {
+        const uiState = scenarioUiState.get(index);
+        if (!uiState) return;
+        uiState.variables[varName].staticValue = value;
+        syncCompiledPaths();
+        updateCompiledPathDisplay(index);
+    }
+
+    function onVarRangeChange(index, varName, bound, value) {
+        const uiState = scenarioUiState.get(index);
+        if (!uiState) return;
+        uiState.variables[varName][bound] = Number.parseInt(value, 10) || 0;
+        syncCompiledPaths();
+        updateCompiledPathDisplay(index);
+    }
+
+    function onHeadersChange(index, value) {
+        if (!currentConfig || !currentConfig.scenarios[index]) return;
+        try {
+            currentConfig.scenarios[index].headers = JSON.parse(value || '{}');
+            document.getElementById('configOutput').innerText = JSON.stringify(currentConfig, null, 2);
+        } catch (parseError) {
+            console.debug('Ignoring incomplete headers JSON while editing', parseError);
+        }
+    }
+
+    function onBodyChange(index, value) {
+        if (!currentConfig || !currentConfig.scenarios[index]) return;
+        currentConfig.scenarios[index].body = value;
+        document.getElementById('configOutput').innerText = JSON.stringify(currentConfig, null, 2);
+    }
+
+    function updateCompiledPathDisplay(index) {
+        const card = document.querySelector(`.scenario-card[data-index="${index}"]`);
+        const scenario = currentConfig?.scenarios?.[index];
+        if (card && scenario) {
+            card.querySelector('.compiled-path').innerText = scenario.path;
+        }
+    }
+
+    function syncCompiledPaths() {
+        if (!currentConfig) return;
+        currentConfig.scenarios.forEach((scenario, index) => {
+            const uiState = scenarioUiState.get(index);
+            if (uiState) {
+                scenario.path = compilePathFromTemplate(uiState.pathTemplate, uiState.variables);
+            }
+        });
+        document.getElementById('configOutput').innerText = JSON.stringify(currentConfig, null, 2);
+    }
+
+    function getActiveWeightSum() {
+        if (!currentConfig || !currentConfig.scenarios) return 0;
+        return currentConfig.scenarios
+            .filter(s => s.active !== false && s.enabled !== false)
+            .reduce((sum, s) => sum + (s.weight || 0), 0);
+    }
+
+    function updateWeightValidation() {
+        const sum = getActiveWeightSum();
+        const activeCount = (currentConfig?.scenarios || []).filter(s => s.active !== false).length;
+        const isValid = activeCount === 0 || sum === 100;
+
+        const summary = document.getElementById('weightSummary');
+        summary.innerText = `Active endpoint weights: ${sum}% / 100%`;
+        summary.className = `weight-summary ${isValid ? 'valid' : 'invalid'}`;
+
+        const warning = document.getElementById('weightValidationWarning');
+        warning.classList.toggle('visible', !isValid && activeCount > 0);
+
+        document.getElementById('start-btn').disabled = !isValid || activeCount === 0;
+        document.getElementById('export-btn').disabled = !isValid || activeCount === 0;
     }
 
     function syncConfigPayload() {
@@ -290,18 +529,32 @@
 
         currentConfig.targetBaseUrl = document.getElementById('targetBaseUrl').value;
         if (!currentConfig.execution) currentConfig.execution = {};
-        currentConfig.execution.concurrency = parseInt(document.getElementById('concurrency').value, 10);
-        currentConfig.execution.durationSeconds = parseInt(document.getElementById('durationSeconds').value, 10);
+        currentConfig.execution.concurrency = Number.parseInt(document.getElementById('concurrency').value, 10);
+        currentConfig.execution.durationSeconds = Number.parseInt(document.getElementById('durationSeconds').value, 10);
         currentConfig.execution.engine = document.getElementById('executionEngine').value;
 
-        // Force-sync table checkbox states into currentConfig scenarios
-        const checkboxes = document.querySelectorAll('.endpoint-checkbox');
-        checkboxes.forEach((cb, index) => {
-            if (currentConfig.scenarios && currentConfig.scenarios[index]) {
-                currentConfig.scenarios[index].active = cb.checked;
-                currentConfig.scenarios[index].enabled = cb.checked;
+        syncCompiledPaths();
+
+        document.querySelectorAll('.scenario-card').forEach(card => {
+            const index = Number.parseInt(card.dataset.index, 10);
+            const headersEditor = card.querySelector('.headers-editor');
+            const bodyEditor = card.querySelector('.body-editor');
+            if (headersEditor) {
+                try {
+                    currentConfig.scenarios[index].headers = JSON.parse(headersEditor.value || '{}');
+                } catch (parseError) {
+                    console.debug('Ignoring invalid headers JSON during sync', parseError);
+                }
+            }
+            if (bodyEditor) {
+                currentConfig.scenarios[index].body = bodyEditor.value;
             }
         });
+    }
+
+    function getEngineQueryParam() {
+        const engine = document.getElementById('executionEngine').value;
+        return engine === 'REACTIVE_WEBFLUX' ? 'reactive' : 'virtual';
     }
 
     async function downloadYaml() {
@@ -321,6 +574,75 @@
         a.click();
     }
 
+    function resetLiveChart() {
+        if (!liveChart) return;
+        liveChart.data.labels = [];
+        liveChart.data.datasets.forEach(d => d.data = []);
+        liveChart.update();
+    }
+
+    function updateLiveChartFromMetric(metric) {
+        if (metric.successfulRequests === undefined || !liveChart) return;
+        const timeStr = new Date(metric.timestamp || Date.now()).toLocaleTimeString();
+        liveChart.data.labels.push(timeStr);
+        liveChart.data.datasets[0].data.push(metric.successfulRequests);
+        liveChart.data.datasets[1].data.push(metric.failedRequests);
+        liveChart.data.datasets[2].data.push(metric.p50 || 0);
+        liveChart.data.datasets[3].data.push(metric.p90 || 0);
+        liveChart.data.datasets[4].data.push(metric.p99 || 0);
+        liveChart.update();
+    }
+
+    async function handleTestCompletionMetric(metric, statusBadge, viewReportBtn, reportContainer) {
+        if (!metric.reportId && !metric.reportUrl && metric.status !== 'COMPLETED') return;
+        statusBadge.innerText = 'Completed';
+        statusBadge.className = 'status-badge status-complete';
+        if (metric.reportUrl) {
+            viewReportBtn.href = metric.reportUrl;
+        }
+        if (metric.reportId) {
+            await loadEmbeddedReport(metric.reportId, metric.reportUrl);
+        } else {
+            reportContainer.style.display = 'block';
+        }
+    }
+
+    async function processSseLine(line, statusBadge, viewReportBtn, reportContainer) {
+        if (!line.includes('event:metric') && !line.includes('event:complete') && !line.startsWith('data:')) {
+            return;
+        }
+        const dataMatch = line.match(/data:(.*)/);
+        if (!dataMatch) return;
+        try {
+            const metric = JSON.parse(dataMatch[1].trim());
+            updateLiveChartFromMetric(metric);
+            await handleTestCompletionMetric(metric, statusBadge, viewReportBtn, reportContainer);
+        } catch (parseError) {
+            console.debug('Ignoring non-JSON SSE payload', parseError);
+        }
+    }
+
+    async function consumeSseStream(response, metricsLog, statusBadge, viewReportBtn, reportContainer) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value, { stream: true });
+            metricsLog.innerText += chunk;
+            buffer += chunk;
+
+            const lines = buffer.split('\n\n');
+            buffer = lines.pop();
+            for (const line of lines) {
+                await processSseLine(line, statusBadge, viewReportBtn, reportContainer);
+            }
+        }
+    }
+
     async function runTest() {
         if (!currentConfig) return alert('Parse a configuration first');
         syncConfigPayload();
@@ -338,17 +660,12 @@
         statusBadge.className = 'status-badge status-running';
         metricsLog.innerText = 'Initializing Workers & Streaming Pulse...\n';
         reportContainer.style.display = 'none';
-
-        if (liveChart) {
-            liveChart.data.labels = [];
-            liveChart.data.datasets.forEach(d => d.data = []);
-            liveChart.update();
-        }
+        resetLiveChart();
 
         abortController = new AbortController();
 
         try {
-            const response = await fetch('/api/v1/test/run', {
+            const response = await fetch(`/api/v1/test/run?engine=${getEngineQueryParam()}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(currentConfig),
@@ -356,57 +673,7 @@
             });
 
             if (!response.ok) throw new Error(`Execution error: Status ${response.status}`);
-
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = '';
-
-            while (true) {
-                const { value, done } = await reader.read();
-                if (done) break;
-
-                const chunk = decoder.decode(value, { stream: true });
-                metricsLog.innerText += chunk;
-
-                buffer += chunk;
-                const lines = buffer.split('\n\n');
-                buffer = lines.pop();
-
-                for (const line of lines) {
-                    if (line.includes('event:metric') || line.includes('event:complete') || line.startsWith('data:')) {
-                        const dataMatch = line.match(/data:(.*)/);
-                        if (dataMatch) {
-                            try {
-                                const metric = JSON.parse(dataMatch[1].trim());
-
-                                if (metric.successfulRequests !== undefined && liveChart) {
-                                    const timeStr = new Date(metric.timestamp || Date.now()).toLocaleTimeString();
-                                    liveChart.data.labels.push(timeStr);
-                                    liveChart.data.datasets[0].data.push(metric.successfulRequests);
-                                    liveChart.data.datasets[1].data.push(metric.failedRequests);
-                                    liveChart.data.datasets[2].data.push(metric.p50 || 0);
-                                    liveChart.data.datasets[3].data.push(metric.p90 || 0);
-                                    liveChart.data.datasets[4].data.push(metric.p99 || 0);
-                                    liveChart.update();
-                                }
-
-                                if (metric.reportId || metric.reportUrl || metric.status === 'COMPLETED') {
-                                    statusBadge.innerText = 'Completed';
-                                    statusBadge.className = 'status-badge status-complete';
-                                    if (metric.reportUrl) {
-                                        viewReportBtn.href = metric.reportUrl;
-                                    }
-                                    if (metric.reportId) {
-                                        await loadEmbeddedReport(metric.reportId, metric.reportUrl);
-                                    } else {
-                                        reportContainer.style.display = 'block';
-                                    }
-                                }
-                            } catch (e) {}
-                        }
-                    }
-                }
-            }
+            await consumeSseStream(response, metricsLog, statusBadge, viewReportBtn, reportContainer);
         } catch (err) {
             if (err.name !== 'AbortError') {
                 console.error("Stream error:", err);
@@ -415,7 +682,7 @@
                 statusBadge.className = 'status-badge';
             }
         } finally {
-            startBtn.disabled = false;
+            updateWeightValidation();
             stopBtn.disabled = true;
         }
     }
@@ -426,7 +693,7 @@
         const statusBadge = document.getElementById('status-badge');
         statusBadge.innerText = 'Stopped';
         statusBadge.className = 'status-badge';
-        document.getElementById('start-btn').disabled = false;
+        updateWeightValidation();
         document.getElementById('stop-btn').disabled = true;
     }
 

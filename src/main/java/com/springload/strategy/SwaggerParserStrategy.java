@@ -20,10 +20,14 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.*;
 
 @Component
 public class SwaggerParserStrategy implements StressConfigParserStrategy {
+
+    private static final String APPLICATION_JSON = "application/json";
+    private static final String SAMPLE_PREFIX = "sample_";
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -69,7 +73,7 @@ public class SwaggerParserStrategy implements StressConfigParserStrategy {
 
     private String extractBaseUrl(OpenAPI openAPI) {
         if (openAPI.getServers() != null && !openAPI.getServers().isEmpty()) {
-            String url = openAPI.getServers().get(0).getUrl();
+            String url = openAPI.getServers().getFirst().getUrl();
             if (url != null && !url.isBlank()) {
                 return url;
             }
@@ -99,9 +103,9 @@ public class SwaggerParserStrategy implements StressConfigParserStrategy {
         Map<String, String> headers = new HashMap<>();
         Map<String, String> queryParams = new HashMap<>();
 
-        headers.put("Accept", "application/json");
+        headers.put("Accept", APPLICATION_JSON);
         if ("POST".equals(method) || "PUT".equals(method) || "PATCH".equals(method)) {
-            headers.put("Content-Type", "application/json");
+            headers.put("Content-Type", APPLICATION_JSON);
         }
 
         String resolvedPath = resolvePathAndParameters(rawPath, operation, openAPI, headers, queryParams);
@@ -121,6 +125,7 @@ public class SwaggerParserStrategy implements StressConfigParserStrategy {
                 queryParams,
                 bodyJson,
                 true,
+                true,
                 extractedVariables
         );
 
@@ -130,7 +135,6 @@ public class SwaggerParserStrategy implements StressConfigParserStrategy {
     private String resolvePathAndParameters(String rawPath, Operation operation, OpenAPI openAPI, Map<String, String> headers, Map<String, String> queryParams) {
         if (operation.getParameters() == null) return rawPath;
 
-        String resolvedPath = rawPath;
         for (Parameter param : operation.getParameters()) {
             if (param == null || param.getName() == null) continue;
 
@@ -146,7 +150,7 @@ public class SwaggerParserStrategy implements StressConfigParserStrategy {
             // Path parameters are intentionally left as standard raw tokens (e.g., {vetId})
             // to allow the load execution service to safely replace them without leaving stray '$' prefixes.
         }
-        return resolvedPath;
+        return rawPath;
     }
 
     private String extractRequestBody(Operation operation, OpenAPI openAPI) {
@@ -154,7 +158,7 @@ public class SwaggerParserStrategy implements StressConfigParserStrategy {
             return null;
         }
 
-        MediaType mediaType = operation.getRequestBody().getContent().get("application/json");
+        MediaType mediaType = operation.getRequestBody().getContent().get(APPLICATION_JSON);
         if (mediaType == null) {
             var firstEntry = operation.getRequestBody().getContent().entrySet().stream().findFirst();
             if (firstEntry.isPresent()) {
@@ -186,23 +190,23 @@ public class SwaggerParserStrategy implements StressConfigParserStrategy {
 
         Map<String, Object> map = new LinkedHashMap<>();
         target.getProperties().forEach((propName, propSchema) ->
-                map.put(propName, extractValueFromSchema(propName, (Schema<?>) propSchema, null, openAPI, depth + 1))
+                map.put(propName, extractValueFromSchema(propName, propSchema, null, openAPI, depth + 1))
         );
         return map;
     }
 
     private Object extractValueFromSchema(String fieldName, Schema<?> schema, Object explicitExample, OpenAPI openAPI, int depth) {
-        if (depth > 6) return "sample_" + fieldName;
+        if (depth > 6) return SAMPLE_PREFIX + fieldName;
 
         Schema<?> target = resolveSchema(schema, openAPI);
-        if (target == null) return "sample_" + fieldName;
+        if (target == null) return SAMPLE_PREFIX + fieldName;
 
         if (explicitExample != null) return explicitExample;
         if (target.getExample() != null) return target.getExample();
         if (target.getDefault() != null) return target.getDefault();
 
         if (target.getEnum() != null && !target.getEnum().isEmpty()) {
-            return target.getEnum().get(0);
+            return target.getEnum().getFirst();
         }
 
         String type = (target.getType() != null) ? target.getType().toLowerCase() : "string";
@@ -227,15 +231,19 @@ public class SwaggerParserStrategy implements StressConfigParserStrategy {
     }
 
     private String deriveFormattedString(String fieldName, String format, Schema<?> target) {
-        if ("date".equals(format) || fieldName.toLowerCase().contains("date")) return LocalDate.now().toString();
-        if ("date-time".equals(format)) return OffsetDateTime.now().toString();
+        if ("date".equals(format) || fieldName.toLowerCase().contains("date")) {
+            return LocalDate.now(ZoneId.systemDefault()).toString();
+        }
+        if ("date-time".equals(format)) {
+            return OffsetDateTime.now(ZoneId.systemDefault()).toString();
+        }
         if ("email".equals(format) || fieldName.toLowerCase().contains("email")) return "user@example.com";
         if ("uri".equals(format) || "url".equals(format)) return "https://example.com";
 
         if (target != null && target.getMinLength() != null && target.getMinLength() > 10) {
             return "sample_value_long_" + fieldName;
         }
-        return "sample_" + fieldName;
+        return SAMPLE_PREFIX + fieldName;
     }
 
     private Map<String, String> extractResponseBindings(Operation operation) {
@@ -246,11 +254,11 @@ public class SwaggerParserStrategy implements StressConfigParserStrategy {
         if (successResponse == null) successResponse = operation.getResponses().get("201");
 
         if (successResponse != null && successResponse.getContent() != null) {
-            MediaType mediaType = successResponse.getContent().get("application/json");
-            if (mediaType != null && mediaType.getSchema() != null && mediaType.getSchema().getProperties() != null) {
-                if (mediaType.getSchema().getProperties().containsKey("id")) {
-                    bindings.put("extractedId", "$.id");
-                }
+            MediaType mediaType = successResponse.getContent().get(APPLICATION_JSON);
+            if (mediaType != null && mediaType.getSchema() != null
+                    && mediaType.getSchema().getProperties() != null
+                    && mediaType.getSchema().getProperties().containsKey("id")) {
+                bindings.put("extractedId", "$.id");
             }
         }
         return bindings;

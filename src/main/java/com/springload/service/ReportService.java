@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -20,7 +21,7 @@ public class ReportService {
     public TestReport generateReport(String reportId, StressConfig config, LocalDateTime startTime, 
                                      List<Long> latencies, long successCount, long errorCount) {
         log.info("Generating report [{}] for test '{}'...", reportId, config.name());
-        LocalDateTime endTime = LocalDateTime.now();
+        LocalDateTime endTime = LocalDateTime.now(ZoneId.systemDefault());
         long durationSeconds = Math.max(1, config.execution().durationSeconds());
         long totalRequests = successCount + errorCount;
         double rps = (double) totalRequests / durationSeconds;
@@ -42,7 +43,7 @@ public class ReportService {
         if (config.scenarios() != null && !config.scenarios().isEmpty()) {
             // Safely check if enabled is true (treating null as true by default)
             var activeScenarios = config.scenarios().stream()
-                    .filter(s ->  s.enabled())
+                    .filter(s -> s.enabled() && s.isActive())
                     .toList();
 
             int scenarioCount = activeScenarios.size();
@@ -79,6 +80,6 @@ public class ReportService {
         List<Long> sorted = new ArrayList<>(latencies);
         Collections.sort(sorted);
         int index = (int) Math.ceil((percentile / 100.0) * sorted.size()) - 1;
-        return sorted.get(Math.max(0, Math.min(index, sorted.size() - 1)));
+        return sorted.get(Math.clamp(index, 0, sorted.size() - 1));
     }
 }

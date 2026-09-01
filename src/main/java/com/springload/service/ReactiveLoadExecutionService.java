@@ -3,6 +3,7 @@ package com.springload.service;
 import com.springload.dto.ScenarioConfig;
 import com.springload.dto.StressConfig;
 import com.springload.dto.TestReport;
+import com.springload.util.DynamicVariableResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -16,20 +17,16 @@ import reactor.core.scheduler.Schedulers;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 @Service
 @Qualifier("reactiveEngine")
 public class ReactiveLoadExecutionService implements LoadExecutionService {
 
     private static final Logger log = LoggerFactory.getLogger(ReactiveLoadExecutionService.class);
-
-    // Pattern to match URI path variables like {itemId} or {id}
-    private static final Pattern PATH_PARAM_PATTERN = Pattern.compile("\\{([^/]+)\\}");
 
     // Headers restricted by Java HttpClient / Netty stack
     private static final Set<String> RESTRICTED_HEADERS = Set.of(
@@ -55,7 +52,7 @@ public class ReactiveLoadExecutionService implements LoadExecutionService {
         AtomicLong errorCounter = new AtomicLong();
         List<Long> latencies = new CopyOnWriteArrayList<>();
 
-        LocalDateTime startTime = LocalDateTime.now();
+        LocalDateTime startTime = LocalDateTime.now(ZoneId.systemDefault());
         long durationSec = config.execution().durationSeconds();
 
         startReactiveExecutionPipeline(config, requestCounter, errorCounter, latencies, emitter, startTime, durationSec);
@@ -72,7 +69,7 @@ public class ReactiveLoadExecutionService implements LoadExecutionService {
                                                 LocalDateTime startTime,
                                                 long durationSec) {
         Flux.fromIterable(config.scenarios())
-                .filter(ScenarioConfig::enabled)
+                .filter(s -> s.enabled() && s.isActive())
                 .flatMap(scenario -> createScenarioFlux(scenario, config, requestCounter, errorCounter, latencies, durationSec))
                 .subscribeOn(Schedulers.boundedElastic())
                 .subscribe(
@@ -101,28 +98,38 @@ public class ReactiveLoadExecutionService implements LoadExecutionService {
                                             AtomicLong requestCounter,
                                             AtomicLong errorCounter,
                                             List<Long> latencies) {
-        long reqStart = System.currentTimeMillis();
-        String resolvedUri = resolvePathVariables(targetBaseUrl, scenario.path());
+        return Mono.defer(() -> {
+            long reqStart = System.currentTimeMillis();
+            String resolvedPath = DynamicVariableResolver.resolve(scenario.path());
+            String resolvedUri = targetBaseUrl + resolvedPath;
+            var resolvedHeaders = DynamicVariableResolver.resolveHeaders(scenario.headers());
+            String resolvedBody = DynamicVariableResolver.resolve(scenario.body());
 
-        var requestSpec = webClient.method(HttpMethod.valueOf(scenario.method().toUpperCase()))
-                .uri(resolvedUri);
+            WebClient.RequestBodySpec bodySpec = webClient
+                    .method(HttpMethod.valueOf(scenario.method().toUpperCase()))
+                    .uri(resolvedUri);
 
-        applyAllowedHeaders(scenario, requestSpec);
+            applyAllowedHeaders(resolvedHeaders, bodySpec);
 
-        return requestSpec
-                .exchangeToMono(response -> {
-                    recordLatencyAndStatus(response.statusCode().is2xxSuccessful(), reqStart, latencies, requestCounter, errorCounter);
-                    return response.releaseBody();
-                })
-                .onErrorResume(e -> {
-                    errorCounter.incrementAndGet();
-                    return Mono.empty();
-                });
+            WebClient.RequestHeadersSpec<?> requestSpec = (resolvedBody != null && !resolvedBody.isBlank())
+                    ? bodySpec.bodyValue(resolvedBody)
+                    : bodySpec;
+
+            return requestSpec
+                    .exchangeToMono(response -> {
+                        recordLatencyAndStatus(response.statusCode().is2xxSuccessful(), reqStart, latencies, requestCounter, errorCounter);
+                        return response.releaseBody();
+                    })
+                    .onErrorResume(e -> {
+                        errorCounter.incrementAndGet();
+                        return Mono.empty();
+                    });
+        });
     }
 
-    private void applyAllowedHeaders(ScenarioConfig scenario, WebClient.RequestHeadersSpec<?> requestSpec) {
-        if (scenario.headers() != null) {
-            scenario.headers().forEach((name, value) -> {
+    private void applyAllowedHeaders(Map<String, String> headers, WebClient.RequestHeadersSpec<?> requestSpec) {
+        if (headers != null) {
+            headers.forEach((name, value) -> {
                 if (name != null && !RESTRICTED_HEADERS.contains(name.toLowerCase(Locale.ROOT))) {
                     requestSpec.header(name, value);
                 }
@@ -197,19 +204,5 @@ public class ReactiveLoadExecutionService implements LoadExecutionService {
                         // Client might have disconnected
                     }
                 });
-    }
-
-    /**
-     * Automatically extracts path variables like {itemId} and populates them with default fallback values.
-     */
-    private String resolvePathVariables(String baseUrl, String pathTemplate) {
-        String fullUri = baseUrl + pathTemplate;
-        Matcher matcher = PATH_PARAM_PATTERN.matcher(fullUri);
-        StringBuilder sb = new StringBuilder();
-        while (matcher.find()) {
-            matcher.appendReplacement(sb, "1");
-        }
-        matcher.appendTail(sb);
-        return sb.toString();
     }
 }

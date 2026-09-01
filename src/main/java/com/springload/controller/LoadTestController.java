@@ -2,7 +2,6 @@ package com.springload.controller;
 
 import com.springload.dto.StressConfig;
 import com.springload.service.LoadExecutionService;
-import com.springload.service.VirtualThreadsLoadExecutionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
