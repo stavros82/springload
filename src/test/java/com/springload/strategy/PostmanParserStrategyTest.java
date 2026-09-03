@@ -147,6 +147,37 @@ class PostmanParserStrategyTest {
     }
 
     @Test
+    void keepsPathVariablesAsBindableTokens() {
+        String json = """
+                {
+                  "info": { "name": "PetClinic" },
+                  "variable": [ { "key": "baseUrl", "value": "http://localhost:8080/petclinic/api" } ],
+                  "item": [
+                    {
+                      "name": "Update Owner",
+                      "request": {
+                        "method": "PUT",
+                        "url": { "raw": "{{baseUrl}}/owners/{{ownerId}}" }
+                      }
+                    },
+                    {
+                      "name": "Owner Pet",
+                      "request": {
+                        "method": "GET",
+                        "url": { "raw": "{{baseUrl}}/owners/:ownerId/pets/{{$guid}}" }
+                      }
+                    }
+                  ]
+                }
+                """;
+
+        StressConfig config = parse(json);
+
+        assertEquals("/owners/{ownerId}", config.scenarios().get(0).path());
+        assertEquals("/owners/{ownerId}/pets/${random.uuid}", config.scenarios().get(1).path());
+    }
+
+    @Test
     void translatesDynamicPostmanVariables() {
         assertEquals("${random.uuid}", strategy.translate("{{$randomUUID}}"));
         assertEquals("${timestamp}", strategy.translate("{{$timestamp}}"));

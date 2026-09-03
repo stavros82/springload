@@ -31,6 +31,7 @@ public class PostmanParserStrategy implements StressConfigParserStrategy {
 
     private static final String DEFAULT_BASE_URL = "http://localhost:8080";
     private static final Pattern POSTMAN_VARIABLE = Pattern.compile("\\{\\{\\s*([^{}\\s]+)\\s*}}");
+    private static final Pattern PATH_PARAM_SEGMENT = Pattern.compile("/:([A-Za-z0-9_-]+)");
     private static final Map<String, String> DYNAMIC_VARIABLE_ALIASES = Map.of(
             "$guid", "${random.uuid}",
             "$randomUUID", "${random.uuid}",
@@ -130,10 +131,11 @@ public class PostmanParserStrategy implements StressConfigParserStrategy {
         String itemName = item.path("name").asText(method + " " + url);
         String scenarioName = folderPath.isEmpty() ? itemName : folderPath + " / " + itemName;
 
+        // The raw url is kept here; base-url stripping and path token translation happen once the collection origin is known.
         return new ScenarioConfig(
                 scenarioName,
                 method,
-                translate(url),
+                url,
                 1,
                 headers,
                 queryParams,
@@ -301,6 +303,28 @@ public class PostmanParserStrategy implements StressConfigParserStrategy {
         };
     }
 
+    /**
+     * Path tokens stay in the raw {@code {token}} form used by the Scenario Inspector Studio and the
+     * execution service (as {@code SwaggerParserStrategy} does), so they can be bound to concrete values.
+     * Postman's {@code :param} segments are normalized to the same form; dynamic variables keep their
+     * {@code ${...}} resolver expression since the engine substitutes those per request.
+     */
+    String translatePath(String path) {
+        String normalized = PATH_PARAM_SEGMENT.matcher(path).replaceAll("/{$1}");
+        if (!normalized.contains("{{")) {
+            return normalized;
+        }
+        Matcher matcher = POSTMAN_VARIABLE.matcher(normalized);
+        StringBuilder sb = new StringBuilder();
+        while (matcher.find()) {
+            String variable = matcher.group(1);
+            String replacement = DYNAMIC_VARIABLE_ALIASES.getOrDefault(variable, "{" + variable + "}");
+            matcher.appendReplacement(sb, Matcher.quoteReplacement(replacement));
+        }
+        matcher.appendTail(sb);
+        return sb.toString();
+    }
+
     /** Converts Postman placeholders ({@code {{token}}}) into the engine's {@code ${token}} syntax. */
     String translate(String value) {
         if (value == null || value.isEmpty() || !value.contains("{{")) {
@@ -325,7 +349,7 @@ public class PostmanParserStrategy implements StressConfigParserStrategy {
             String key = entry.getKey().toLowerCase();
             if ((key.equals("baseurl") || key.equals("base_url") || key.equals("url") || key.equals("host"))
                     && entry.getValue() != null && !entry.getValue().isBlank()) {
-                return new BaseUrl(trimTrailingSlash(translate(entry.getValue())), "${" + entry.getKey() + "}");
+                return new BaseUrl(trimTrailingSlash(translate(entry.getValue())), "{{" + entry.getKey() + "}}");
             }
         }
         for (ScenarioConfig scenario : scenarios) {
@@ -374,7 +398,7 @@ public class PostmanParserStrategy implements StressConfigParserStrategy {
         if (path.isBlank()) {
             return "/";
         }
-        return path.startsWith("/") ? path : "/" + path;
+        return translatePath(path.startsWith("/") ? path : "/" + path);
     }
 
     private ScenarioConfig withPath(ScenarioConfig scenario, String path) {
