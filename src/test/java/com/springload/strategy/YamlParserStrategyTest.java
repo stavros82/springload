@@ -44,6 +44,12 @@ class YamlParserStrategyTest {
     }
 
     @Test
+    void collapsesAccumulatedDollarPrefixes() {
+        assertEquals("/owners/{ownerId}", YamlParserStrategy.normalizePath("/owners/$${ownerId}"));
+        assertEquals("/owners/${random(1-100)}", YamlParserStrategy.normalizePath("/owners/$$${random(1-100)}"));
+    }
+
+    @Test
     void keepsDynamicResolverExpressions() {
         assertEquals("/pets/${random.uuid}", YamlParserStrategy.normalizePath("/pets/${random.uuid}"));
         assertEquals("/pets/${random(1-100)}", YamlParserStrategy.normalizePath("/pets/${random(1-100)}"));

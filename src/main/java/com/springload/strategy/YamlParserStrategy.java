@@ -20,7 +20,7 @@ import java.util.regex.Pattern;
 public class YamlParserStrategy implements StressConfigParserStrategy {
 
     private static final Logger log = LoggerFactory.getLogger(YamlParserStrategy.class);
-    private static final Pattern PLACEHOLDER = Pattern.compile("\\$\\{([^{}]+)}");
+    private static final Pattern PLACEHOLDER = Pattern.compile("\\$*\\{([^{}]+)}");
     private static final Pattern COLON_SEGMENT = Pattern.compile("/:([A-Za-z0-9_-]+)");
     private static final Pattern DYNAMIC_EXPRESSION =
             Pattern.compile("random\\.uuid|timestamp|random\\(\\d+-\\d+\\)");
@@ -103,7 +103,7 @@ public class YamlParserStrategy implements StressConfigParserStrategy {
             return path;
         }
         String normalized = COLON_SEGMENT.matcher(path).replaceAll("/{$1}");
-        if (!normalized.contains("${")) {
+        if (!normalized.contains("{")) {
             return normalized;
         }
         Matcher matcher = PLACEHOLDER.matcher(normalized);
