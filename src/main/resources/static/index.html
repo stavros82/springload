@@ -201,16 +201,16 @@
     /** @type {Map<number, { pathTemplate: string, variables: Record<string, { mode: string, staticValue: string, min: number, max: number }> }>} */
     const scenarioUiState = new Map();
 
+    /** Matches {token}, ${token} and any accidental $$ pile-up from earlier exports. */
+    const PATH_PLACEHOLDER = /\$*\{([^{}]+)\}/g;
+    const DYNAMIC_EXPRESSION = /^(random\.uuid|timestamp|random\(\d+-\d+\))$/;
+
     function extractPathVariables(path) {
         const vars = [];
         if (!path) return vars;
-        let start = path.indexOf('{');
-        while (start !== -1) {
-            const end = path.indexOf('}', start + 1);
-            if (end === -1) break;
-            const varName = path.slice(start + 1, end);
-            if (varName && !vars.includes(varName)) vars.push(varName);
-            start = path.indexOf('{', end + 1);
+        for (const match of path.matchAll(PATH_PLACEHOLDER)) {
+            const varName = match[1].trim();
+            if (varName && !DYNAMIC_EXPRESSION.test(varName) && !vars.includes(varName)) vars.push(varName);
         }
         return vars;
     }
@@ -290,11 +290,12 @@
     }
 
     function compilePathFromTemplate(pathTemplate, variables) {
-        let compiled = pathTemplate;
-        Object.entries(variables).forEach(([name, varState]) => {
-            compiled = compiled.replaceAll(`{${name}}`, compileVariableValue(varState));
+        return pathTemplate.replace(PATH_PLACEHOLDER, (match, rawName) => {
+            const name = rawName.trim();
+            const varState = variables[name];
+            if (varState) return compileVariableValue(varState);
+            return DYNAMIC_EXPRESSION.test(name) ? '${' + name + '}' : '{' + name + '}';
         });
-        return compiled;
     }
 
     function initScenarioUiState(config) {
