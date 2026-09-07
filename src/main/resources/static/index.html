@@ -627,15 +627,20 @@
     }
 
     async function processSseLine(line, statusBadge, viewReportBtn, reportContainer) {
-        if (!line.includes('event:metric') && !line.includes('event:complete') && !line.startsWith('data:')) {
+        if (!line.includes('event:metric') && !line.includes('event:complete') && !line.includes('event:warning') && !line.startsWith('data:')) {
             return;
         }
         const dataMatch = line.match(/data:(.*)/);
         if (!dataMatch) return;
         try {
-            const metric = JSON.parse(dataMatch[1].trim());
-            updateLiveChartFromMetric(metric);
-            await handleTestCompletionMetric(metric, statusBadge, viewReportBtn, reportContainer);
+            const payload = JSON.parse(dataMatch[1].trim());
+            if (line.includes('event:warning') && payload.skippedScenario) {
+                const metricsLog = document.getElementById('metricsLog');
+                metricsLog.innerText += `\n⚠️ SKIPPED: "${payload.skippedScenario}" — ${payload.reason}`;
+                return;
+            }
+            updateLiveChartFromMetric(payload);
+            await handleTestCompletionMetric(payload, statusBadge, viewReportBtn, reportContainer);
         } catch (parseError) {
             console.debug('Ignoring non-JSON SSE payload', parseError);
         }

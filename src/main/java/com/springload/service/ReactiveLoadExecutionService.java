@@ -70,7 +70,7 @@ public class ReactiveLoadExecutionService implements LoadExecutionService {
                                                 long durationSec) {
         Flux.fromIterable(config.scenarios())
                 .filter(s -> s.enabled() && s.isActive())
-                .flatMap(scenario -> createScenarioFlux(scenario, config, requestCounter, errorCounter, latencies, durationSec))
+                .flatMap(scenario -> createScenarioFlux(scenario, config, requestCounter, errorCounter, latencies, durationSec, emitter))
                 .subscribeOn(Schedulers.boundedElastic())
                 .subscribe(
                         null,
@@ -84,10 +84,11 @@ public class ReactiveLoadExecutionService implements LoadExecutionService {
                                           AtomicLong requestCounter,
                                           AtomicLong errorCounter,
                                           List<Long> latencies,
-                                          long durationSec) {
+                                          long durationSec,
+                                          SseEmitter emitter) {
         int concurrency = config.execution().concurrency();
         return Flux.range(0, concurrency)
-                .flatMap(i -> executeSingleRequest(scenario, config.targetBaseUrl(), requestCounter, errorCounter, latencies)
+                .flatMap(i -> executeSingleRequest(scenario, config.targetBaseUrl(), requestCounter, errorCounter, latencies, emitter)
                         .repeat()
                         .take(Duration.ofSeconds(durationSec))
                 );
@@ -97,11 +98,15 @@ public class ReactiveLoadExecutionService implements LoadExecutionService {
                                             String targetBaseUrl,
                                             AtomicLong requestCounter,
                                             AtomicLong errorCounter,
-                                            List<Long> latencies) {
+                                            List<Long> latencies,
+                                            SseEmitter emitter) {
         if (DynamicVariableResolver.hasCorrelatedVariables(scenario.body())
                 || DynamicVariableResolver.hasCorrelatedVariables(scenario.path())) {
-            log.warn("Skipping scenario '{}' — contains correlated variables requiring stateful extraction (not supported in stateless mode)",
-                    scenario.name());
+            String msg = "Scenario '" + scenario.name() + "' skipped — contains correlated variables (stateful extraction not supported in stateless mode)";
+            log.warn(msg);
+            try {
+                emitter.send(SseEmitter.event().name("warning").data(Map.of("skippedScenario", scenario.name(), "reason", msg)));
+            } catch (Exception ignored) {}
             return Mono.empty();
         }
         return Mono.defer(() -> {

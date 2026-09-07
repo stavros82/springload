@@ -27,7 +27,9 @@ public final class DynamicVariableResolver {
      * Such scenarios depend on prior response extraction and must be skipped in stateless mode.
      */
     public static boolean hasCorrelatedVariables(String template) {
-        if (template == null || !template.contains(PLACEHOLDER_PREFIX)) return false;
+        if (template == null || !template.contains(PLACEHOLDER_PREFIX)) {
+            return false;
+        }
         String stripped = RANDOM_RANGE.matcher(template).replaceAll("");
         stripped = RANDOM_UUID.matcher(stripped).replaceAll("");
         stripped = TIMESTAMP.matcher(stripped).replaceAll("");
