@@ -28,14 +28,11 @@ public class IsolatedFlowIT {
         }
         Assumptions.assumeTrue(dockerAvailable, "Docker not available, skipping Testcontainers integration test");
 
-        try (PostgreSQLContainer<?> db1 = new PostgreSQLContainer<>("postgres:15-alpine").withDatabaseName("flow1").withUsername("user").withPassword("pass");
-             PostgreSQLContainer<?> db2 = new PostgreSQLContainer<>("postgres:15-alpine").withDatabaseName("flow2").withUsername("user").withPassword("pass")) {
+        try (com.springload.testutil.FlowDbTestUtil.FlowDb f1 = com.springload.testutil.FlowDbTestUtil.startEphemeralDb();
+             com.springload.testutil.FlowDbTestUtil.FlowDb f2 = com.springload.testutil.FlowDbTestUtil.startEphemeralDb()) {
 
-            db1.start();
-            db2.start();
-
-            try (Connection c1 = java.sql.DriverManager.getConnection(db1.getJdbcUrl(), db1.getUsername(), db1.getPassword());
-                 Connection c2 = java.sql.DriverManager.getConnection(db2.getJdbcUrl(), db2.getUsername(), db2.getPassword())) {
+            try (Connection c1 = java.sql.DriverManager.getConnection(f1.getJdbcUrl(), f1.getUsername(), f1.getPassword());
+                 Connection c2 = java.sql.DriverManager.getConnection(f2.getJdbcUrl(), f2.getUsername(), f2.getPassword())) {
 
                 try (Statement s1 = c1.createStatement(); Statement s2 = c2.createStatement()) {
                     s1.execute("CREATE TABLE IF NOT EXISTS kv(k text primary key, v text);");
