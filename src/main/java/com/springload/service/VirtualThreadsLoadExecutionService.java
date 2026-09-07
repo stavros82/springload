@@ -62,37 +62,46 @@ public class VirtualThreadsLoadExecutionService implements LoadExecutionService 
         long startMillis = System.currentTimeMillis();
         long endTime = startMillis + (config.execution().durationSeconds() * 1000L);
 
-        startVirtualThreadExecutor(config, endTime, requestCounter, errorCounter, latencies);
+        startVirtualThreadExecutor(config, emitter, endTime, requestCounter, errorCounter, latencies);
         scheduleMetricsEmitter(emitter, config, startTime, endTime, requestCounter, errorCounter, latencies);
 
         return emitter;
     }
 
-    private void startVirtualThreadExecutor(StressConfig config, long endTime,
+    private void startVirtualThreadExecutor(StressConfig config, SseEmitter emitter, long endTime,
                                             AtomicLong requestCounter, AtomicLong errorCounter,
                                             List<Long> latencies) {
         Thread.ofPlatform().name("load-generator-", 0).start(() -> {
             try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
                 config.scenarios().stream()
                         .filter(s -> s.enabled() && s.isActive())
-                        .forEach(scenario -> submitScenarioTasks(scenario, config, endTime, executor, requestCounter, errorCounter, latencies));
+                        .forEach(scenario -> submitScenarioTasks(scenario, config, endTime, executor, requestCounter, errorCounter, latencies, emitter));
             }
         });
     }
 
     private void submitScenarioTasks(ScenarioConfig scenario, StressConfig config, long endTime,
                                      ExecutorService executor, AtomicLong requestCounter,
-                                     AtomicLong errorCounter, List<Long> latencies) {
+                                     AtomicLong errorCounter, List<Long> latencies, SseEmitter emitter) {
         log.info("Initializing Virtual Threads for scenario: [{}] {}", scenario.method(), scenario.path());
 
         for (int i = 0; i < config.execution().concurrency(); i++) {
-            executor.submit(() -> executeScenarioLoop(scenario, config.targetBaseUrl(), endTime, requestCounter, errorCounter, latencies));
+            executor.submit(() -> executeScenarioLoop(scenario, config.targetBaseUrl(), endTime, requestCounter, errorCounter, latencies, emitter));
         }
     }
 
     private void executeScenarioLoop(ScenarioConfig scenario, String baseUrl, long endTime,
                                      AtomicLong requestCounter, AtomicLong errorCounter,
-                                     List<Long> latencies) {
+                                     List<Long> latencies, SseEmitter emitter) {
+        if (DynamicVariableResolver.hasCorrelatedVariables(scenario.body())
+                || DynamicVariableResolver.hasCorrelatedVariables(scenario.path())) {
+            String msg = "Scenario '" + scenario.name() + "' skipped — contains correlated variables (stateful extraction not supported in stateless mode)";
+            log.warn(msg);
+            try {
+                emitter.send(SseEmitter.event().name("warning").data(Map.of("skippedScenario", scenario.name(), "reason", msg)));
+            } catch (Exception ignored) {}
+            return;
+        }
         while (System.currentTimeMillis() < endTime) {
             String resolvedPath = DynamicVariableResolver.resolve(scenario.path());
             String fullUrl = baseUrl + resolvedPath;
