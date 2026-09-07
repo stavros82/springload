@@ -187,6 +187,112 @@ class PostmanParserStrategyTest {
     }
 
     @Test
+    void extractsTestScriptVariablesFromEvents() {
+        String json = """
+                {
+                  "info": { "name": "Extraction Test" },
+                  "item": [
+                    {
+                      "name": "Get User",
+                      "request": {
+                        "method": "GET",
+                        "url": { "host": [ "api.example.com" ], "path": [ "users", "123" ] }
+                      },
+                      "event": [
+                        {
+                          "listen": "test",
+                          "script": {
+                            "exec": [
+                              "pm.environment.set(\\"userId\\", pm.response.json().id);",
+                              "pm.environment.set(\\"token\\", pm.response.headers.get(\\"X-Auth-Token\\"));"
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """;
+
+        StressConfig config = parse(json);
+        ScenarioConfig scenario = config.scenarios().getFirst();
+
+        assertEquals(2, scenario.extractedVariables().size());
+        assertEquals("$.id", scenario.extractedVariables().get("userId"));
+        assertEquals("header:X-Auth-Token", scenario.extractedVariables().get("token"));
+    }
+
+    @Test
+    void extractsTestScriptVariablesWithSingleLineScript() {
+        String json = """
+                {
+                  "info": { "name": "Single Line Script" },
+                  "item": [
+                    {
+                      "name": "Login",
+                      "request": {
+                        "method": "POST",
+                        "url": { "host": [ "api.example.com" ], "path": [ "login" ] }
+                      },
+                      "event": [
+                        {
+                          "listen": "test",
+                          "script": {
+                            "exec": "pm.environment.set(\\"sessionId\\", pm.response.json().session);"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """;
+
+        StressConfig config = parse(json);
+        ScenarioConfig scenario = config.scenarios().getFirst();
+
+        assertEquals(1, scenario.extractedVariables().size());
+        assertEquals("$.session", scenario.extractedVariables().get("sessionId"));
+    }
+
+    @Test
+    void ignoresNonTestEvents() {
+        String json = """
+                {
+                  "info": { "name": "Event Filter Test" },
+                  "item": [
+                    {
+                      "name": "Request",
+                      "request": {
+                        "method": "GET",
+                        "url": { "host": [ "api.example.com" ], "path": [ "data" ] }
+                      },
+                      "event": [
+                        {
+                          "listen": "prerequest",
+                          "script": {
+                            "exec": [ "pm.environment.set(\\"should_ignore\\", pm.response.json().value);" ]
+                          }
+                        },
+                        {
+                          "listen": "test",
+                          "script": {
+                            "exec": [ "pm.environment.set(\\"extracted\\", pm.response.json().id);" ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """;
+
+        StressConfig config = parse(json);
+        ScenarioConfig scenario = config.scenarios().getFirst();
+
+        assertEquals(1, scenario.extractedVariables().size());
+        assertEquals("$.id", scenario.extractedVariables().get("extracted"));
+    }
+
+    @Test
     void rejectsCollectionWithoutItems() {
         assertThrows(RuntimeException.class, () -> parse("{\"info\": {\"name\": \"Empty\"}}"));
     }

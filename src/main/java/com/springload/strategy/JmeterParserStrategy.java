@@ -99,6 +99,7 @@ public class JmeterParserStrategy implements StressConfigParserStrategy {
         Map<String, String> queryParams = extractQueryParams(sampler);
         Map<String, String> headers     = extractHeaders(sampler, doc);
         String body = extractBody(sampler);
+        Map<String, String> extractedVariables = extractPostProcessorVariables(sampler);
 
         return new ScenarioConfig(
                 name.isBlank() ? method + " " + path : name,
@@ -110,7 +111,7 @@ public class JmeterParserStrategy implements StressConfigParserStrategy {
                 body,
                 true,
                 true,
-                Map.of()
+                extractedVariables
         );
     }
 
@@ -195,6 +196,90 @@ public class JmeterParserStrategy implements StressConfigParserStrategy {
             }
         }
         return null;
+    }
+
+    /**
+     * Extracts variable definitions from JSONPostProcessor and RegexExtractor
+     * elements nested directly under this HTTPSamplerProxy.
+     *
+     * @param sampler The HTTPSamplerProxy element
+     * @return Map of variable names to their extract expressions
+     */
+    private Map<String, String> extractPostProcessorVariables(Element sampler) {
+        Map<String, String> extracted = new LinkedHashMap<>();
+
+        // Look for JSONPostProcessor siblings in the parent hashTree
+        extractJsonPostProcessorVariables(sampler, extracted);
+
+        // Look for RegexExtractor siblings
+        extractRegexExtractorVariables(sampler, extracted);
+
+        return extracted;
+    }
+
+    /**
+     * Extracts variables from JSONPostProcessor elements.
+     * JSONPostProcessor has referenceNames (target vars) and jsonPathExprs (paths).
+     */
+    private void extractJsonPostProcessorVariables(Element sampler, Map<String, String> extracted) {
+        NodeList allJsonProcessors = sampler.getOwnerDocument().getElementsByTagName("JSONPostProcessor");
+        for (int i = 0; i < allJsonProcessors.getLength(); i++) {
+            Element processor = (Element) allJsonProcessors.item(i);
+
+            // Extract reference names (variable names)
+            String refNames = stringProp(processor, "JSONPostProcessor.referenceNames", "");
+            if (refNames.isBlank()) {
+                continue;
+            }
+
+            // Extract JSONPath expressions
+            String paths = stringProp(processor, "JSONPostProcessor.jsonPathExprs", "");
+            if (paths.isBlank()) {
+                continue;
+            }
+
+            // Split by semicolon and create mappings
+            String[] names = refNames.split(";");
+            String[] pathExprs = paths.split(";");
+
+            for (int j = 0; j < names.length && j < pathExprs.length; j++) {
+                String varName = names[j].trim();
+                String pathExpr = pathExprs[j].trim();
+                if (!varName.isEmpty() && !pathExpr.isEmpty()) {
+                    extracted.put(varName, pathExpr);
+                }
+            }
+        }
+    }
+
+    /**
+     * Extracts variables from RegexExtractor elements.
+     * RegexExtractor has refVal (variable), regex (pattern), and template (capture group).
+     */
+    private void extractRegexExtractorVariables(Element sampler, Map<String, String> extracted) {
+        NodeList allRegexExtractors = sampler.getOwnerDocument().getElementsByTagName("RegexExtractor");
+        for (int i = 0; i < allRegexExtractors.getLength(); i++) {
+            Element extractor = (Element) allRegexExtractors.item(i);
+
+            // Extract variable name
+            String varName = stringProp(extractor, "RegexExtractor.refname", "");
+            if (varName.isBlank()) {
+                continue;
+            }
+
+            // Extract regex pattern
+            String regex = stringProp(extractor, "RegexExtractor.regexp", "");
+            if (regex.isBlank()) {
+                continue;
+            }
+
+            // Extract template (capture group index, e.g., "$1$" for group 1)
+            String template = stringProp(extractor, "RegexExtractor.template", "$1$");
+
+            // Format as regex extractor rule: regex|template
+            String extractorRule = regex + "|" + template;
+            extracted.put(varName, extractorRule);
+        }
     }
 
     private String buildBaseUrl(String protocol, String domain, String port) {
