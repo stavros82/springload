@@ -64,6 +64,24 @@ The `stress.yaml` file acts as the declarative blueprint for load tests. The Spr
 
 ## 🧪 Recommended Experiment Plan
 
+## CI: Isolated DB tests (Testcontainers)
+
+Integration tests that require ephemeral databases are enabled via a Maven profile to avoid pulling Testcontainers into every local dev run.
+
+- Enable Testcontainers in CI with:
+
+  mvn -Dci-containers=true test
+
+  or explicitly:
+
+  mvn -Pci-containers test
+
+- The project contains an example integration test that uses Testcontainers to start per-flow PostgreSQL instances (skipped automatically if Docker is not available).
+
+- See README_TESTCONTAINERS.md for full guidance and a Gradle example.
+
+## 🧪 Recommended Experiment Plan
+
 1.  **Baseline Test (Low Load):** 10 concurrent requests for 15 seconds. Ensure ~10–15ms average latency with 0% error rate.
 2.  **Concurrency Load Test (Medium Load):** 200 virtual threads/users. Measure thread contention, HikariCP database connection pool wait times, and p95/p99 tail latency spikes.
 3.  **Breaking Point / Spike Test (High Load):** 1,000+ concurrent connections. Observe `HTTP 503 Service Unavailable` or `SocketTimeoutException` errors as the target Spring app exhausts resource pools.
