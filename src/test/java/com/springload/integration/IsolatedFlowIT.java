@@ -2,6 +2,8 @@ package com.springload.integration;
 
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.DockerClientFactory;
+import org.junit.jupiter.api.Assumptions;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -17,6 +19,15 @@ public class IsolatedFlowIT {
 
     @Test
     public void twoEphemeralDbsAreIsolated() throws Exception {
+        // Skip the test if Docker is not available in the current environment
+        boolean dockerAvailable = true;
+        try {
+            DockerClientFactory.instance().client();
+        } catch (Exception e) {
+            dockerAvailable = false;
+        }
+        Assumptions.assumeTrue(dockerAvailable, "Docker not available, skipping Testcontainers integration test");
+
         try (PostgreSQLContainer<?> db1 = new PostgreSQLContainer<>("postgres:15-alpine").withDatabaseName("flow1").withUsername("user").withPassword("pass");
              PostgreSQLContainer<?> db2 = new PostgreSQLContainer<>("postgres:15-alpine").withDatabaseName("flow2").withUsername("user").withPassword("pass")) {
 
