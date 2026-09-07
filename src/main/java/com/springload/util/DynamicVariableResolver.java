@@ -17,8 +17,22 @@ public final class DynamicVariableResolver {
     private static final Pattern RANDOM_RANGE = Pattern.compile("\\$\\{random\\((\\d+)-(\\d+)\\)}");
     private static final Pattern RANDOM_UUID = Pattern.compile("\\$\\{random\\.uuid}");
     private static final Pattern TIMESTAMP = Pattern.compile("\\$\\{timestamp}");
+    private static final Pattern UNRESOLVED = Pattern.compile("\\$\\{[^}]+}");
 
     private DynamicVariableResolver() {}
+
+    /**
+     * Returns true if the template contains correlated variable placeholders that cannot
+     * be resolved statically (i.e. anything other than random.uuid, timestamp, random(min-max)).
+     * Such scenarios depend on prior response extraction and must be skipped in stateless mode.
+     */
+    public static boolean hasCorrelatedVariables(String template) {
+        if (template == null || !template.contains(PLACEHOLDER_PREFIX)) return false;
+        String stripped = RANDOM_RANGE.matcher(template).replaceAll("");
+        stripped = RANDOM_UUID.matcher(stripped).replaceAll("");
+        stripped = TIMESTAMP.matcher(stripped).replaceAll("");
+        return UNRESOLVED.matcher(stripped).find();
+    }
 
     public static String resolve(String template) {
         if (template == null || !template.contains(PLACEHOLDER_PREFIX)) {

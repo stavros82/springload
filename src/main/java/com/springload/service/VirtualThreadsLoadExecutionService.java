@@ -93,6 +93,12 @@ public class VirtualThreadsLoadExecutionService implements LoadExecutionService 
     private void executeScenarioLoop(ScenarioConfig scenario, String baseUrl, long endTime,
                                      AtomicLong requestCounter, AtomicLong errorCounter,
                                      List<Long> latencies) {
+        if (DynamicVariableResolver.hasCorrelatedVariables(scenario.body())
+                || DynamicVariableResolver.hasCorrelatedVariables(scenario.path())) {
+            log.warn("Skipping scenario '{}' — contains correlated variables requiring stateful extraction (not supported in stateless mode)",
+                    scenario.name());
+            return;
+        }
         while (System.currentTimeMillis() < endTime) {
             String resolvedPath = DynamicVariableResolver.resolve(scenario.path());
             String fullUrl = baseUrl + resolvedPath;

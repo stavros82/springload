@@ -4,5 +4,6 @@ public enum ParserType {
     HAR,
     SWAGGER,
     YAML,
-    POSTMAN
+    POSTMAN,
+    JMETER
 }

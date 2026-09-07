@@ -45,4 +45,15 @@ class DynamicVariableResolverTest {
         Map<String, String> resolved = DynamicVariableResolver.resolveHeaders(headers);
         assertNotEquals(headers.get("X-Request-Id"), resolved.get("X-Request-Id"));
     }
+
+    @Test
+    void detectsCorrelatedVariables() {
+        assertTrue(DynamicVariableResolver.hasCorrelatedVariables("{\"petId\": \"${pet_id}\"}"));
+        assertTrue(DynamicVariableResolver.hasCorrelatedVariables("/api/owners/${owner_id}/pets"));
+        assertFalse(DynamicVariableResolver.hasCorrelatedVariables("/api/owners/${random(1-100)}/pets"));
+        assertFalse(DynamicVariableResolver.hasCorrelatedVariables("/api/items/${random.uuid}"));
+        assertFalse(DynamicVariableResolver.hasCorrelatedVariables("ts=${timestamp}"));
+        assertFalse(DynamicVariableResolver.hasCorrelatedVariables("/api/vets/101"));
+        assertFalse(DynamicVariableResolver.hasCorrelatedVariables(null));
+    }
 }

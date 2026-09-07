@@ -98,6 +98,12 @@ public class ReactiveLoadExecutionService implements LoadExecutionService {
                                             AtomicLong requestCounter,
                                             AtomicLong errorCounter,
                                             List<Long> latencies) {
+        if (DynamicVariableResolver.hasCorrelatedVariables(scenario.body())
+                || DynamicVariableResolver.hasCorrelatedVariables(scenario.path())) {
+            log.warn("Skipping scenario '{}' — contains correlated variables requiring stateful extraction (not supported in stateless mode)",
+                    scenario.name());
+            return Mono.empty();
+        }
         return Mono.defer(() -> {
             long reqStart = System.currentTimeMillis();
             String resolvedPath = DynamicVariableResolver.resolve(scenario.path());

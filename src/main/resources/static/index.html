@@ -101,6 +101,7 @@
                     <option value="HAR">Chrome / Firefox HAR (.har)</option>
                     <option value="SWAGGER" selected>OpenAPI / Swagger Specification (.json / .yaml)</option>
                     <option value="POSTMAN">Postman Collection (v2.0 / v2.1 .json)</option>
+                    <option value="JMETER">Apache JMeter Test Plan (.jmx)</option>
                     <option value="YAML">Existing stress.yaml File</option>
                 </select>
             </div>
@@ -302,11 +303,14 @@
         scenarioUiState.clear();
         (config.scenarios || []).forEach((scenario, index) => {
             const pathTemplate = scenario.path || '';
+            const bodyTemplate = scenario.body || undefined;
             const variables = {};
-            extractPathVariables(pathTemplate).forEach(varName => {
-                variables[varName] = { mode: 'random', staticValue: '1', min: 1, max: 100 };
+            // Collect variables from both path and body
+            const allTemplates = [pathTemplate, bodyTemplate || ''].join(' ');
+            extractPathVariables(allTemplates).forEach(varName => {
+                variables[varName] = { mode: 'static', staticValue: '1', min: 1, max: 100 };
             });
-            scenarioUiState.set(index, { pathTemplate, variables });
+            scenarioUiState.set(index, { pathTemplate, bodyTemplate, variables });
         });
     }
 
@@ -350,7 +354,7 @@
         card.className = `scenario-card${isActive ? '' : ' inactive'}`;
         card.dataset.index = index;
 
-        const pathVars = extractPathVariables(uiState.pathTemplate);
+        const pathVars = extractPathVariables([uiState.pathTemplate, uiState.bodyTemplate || ''].join(' '));
         let varOverridesHtml = '';
         if (pathVars.length > 0) {
             varOverridesHtml = '<div class="card-section-label">Path Variable Overrides</div>';
@@ -492,12 +496,25 @@
         }
     }
 
+    function compileBodyFromTemplate(body, variables) {
+        if (!body) return body;
+        return body.replace(PATH_PLACEHOLDER, (match, rawName) => {
+            const name = rawName.trim();
+            const varState = variables[name];
+            if (varState) return compileVariableValue(varState);
+            return DYNAMIC_EXPRESSION.test(name) ? '${' + name + '}' : match;
+        });
+    }
+
     function syncCompiledPaths() {
         if (!currentConfig) return;
         currentConfig.scenarios.forEach((scenario, index) => {
             const uiState = scenarioUiState.get(index);
             if (uiState) {
                 scenario.path = compilePathFromTemplate(uiState.pathTemplate, uiState.variables);
+                if (uiState.bodyTemplate !== undefined) {
+                    scenario.body = compileBodyFromTemplate(uiState.bodyTemplate, uiState.variables);
+                }
             }
         });
         document.getElementById('configOutput').innerText = JSON.stringify(currentConfig, null, 2);
