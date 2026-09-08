@@ -68,5 +68,7 @@ class DynamicVariableResolverTest {
         assertEquals("42", extracted.get("customerId"));
         assertEquals("/customers/42",
                 DynamicVariableResolver.resolve("/customers/${customerId}", extracted));
+        assertEquals("/customers/42",
+                DynamicVariableResolver.resolve("/customers/{customerId}", extracted));
     }
 }

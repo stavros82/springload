@@ -15,7 +15,8 @@ import java.util.regex.Pattern;
 
 /**
  * Thread-safe, lock-free resolver for dynamic placeholder expressions in URL paths,
- * headers, and JSON body templates. Strings without a {@code ${} prefix bypass regex entirely.
+ * headers, and JSON body templates. Supports both {@code ${name}} and {@code {name}}
+ * flow-variable references.
  */
 public final class DynamicVariableResolver {
 
@@ -25,6 +26,7 @@ public final class DynamicVariableResolver {
     private static final Pattern TIMESTAMP = Pattern.compile("\\$\\{timestamp}");
     private static final Pattern UNRESOLVED = Pattern.compile("\\$\\{[^}]+}");
     private static final Pattern VARIABLE = Pattern.compile("\\$\\{([^}]+)}");
+    private static final Pattern PATH_VARIABLE = Pattern.compile("(?<!\\$)\\{([A-Za-z_$][A-Za-z0-9_$-]*)}");
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private DynamicVariableResolver() {}
@@ -35,7 +37,7 @@ public final class DynamicVariableResolver {
      * Such scenarios depend on prior response extraction and must be skipped in stateless mode.
      */
     public static boolean hasCorrelatedVariables(String template) {
-        if (template == null || !template.contains(PLACEHOLDER_PREFIX)) {
+        if (template == null || (!template.contains(PLACEHOLDER_PREFIX) && !PATH_VARIABLE.matcher(template).find())) {
             return false;
         }
         String stripped = RANDOM_RANGE.matcher(template).replaceAll("");
@@ -49,7 +51,7 @@ public final class DynamicVariableResolver {
     }
 
     public static String resolve(String template, Map<String, String> variables) {
-        if (template == null || !template.contains(PLACEHOLDER_PREFIX)) {
+        if (template == null || (!template.contains(PLACEHOLDER_PREFIX) && !PATH_VARIABLE.matcher(template).find())) {
             return template;
         }
 
@@ -74,7 +76,15 @@ public final class DynamicVariableResolver {
                     value == null ? Matcher.quoteReplacement(variableMatcher.group()) : Matcher.quoteReplacement(value));
         }
         variableMatcher.appendTail(resolved);
-        return resolved.toString();
+        Matcher pathVariableMatcher = PATH_VARIABLE.matcher(resolved);
+        StringBuffer pathResolved = new StringBuffer();
+        while (pathVariableMatcher.find()) {
+            String value = variables.get(pathVariableMatcher.group(1));
+            pathVariableMatcher.appendReplacement(pathResolved,
+                    value == null ? Matcher.quoteReplacement(pathVariableMatcher.group()) : Matcher.quoteReplacement(value));
+        }
+        pathVariableMatcher.appendTail(pathResolved);
+        return pathResolved.toString();
     }
 
     public static Map<String, String> resolveHeaders(Map<String, String> headers) {
@@ -86,7 +96,7 @@ public final class DynamicVariableResolver {
             return headers;
         }
         boolean needsResolution = headers.values().stream()
-                .anyMatch(v -> v != null && v.contains(PLACEHOLDER_PREFIX));
+                .anyMatch(v -> v != null && (v.contains(PLACEHOLDER_PREFIX) || PATH_VARIABLE.matcher(v).find()));
         if (!needsResolution) {
             return headers;
         }
