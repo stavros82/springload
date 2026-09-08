@@ -288,6 +288,7 @@
     }
 
     function compileVariableValue(varState) {
+        if (varState.mode === 'extracted') return '${' + varState.name + '}';
         if (varState.mode === 'static') return varState.staticValue || '1';
         if (varState.mode === 'uuid') return '${random.uuid}';
         if (varState.mode === 'random') {
@@ -309,6 +310,10 @@
 
     function initScenarioUiState(config) {
         scenarioUiState.clear();
+        const extractedNames = new Set();
+        (config.scenarios || []).forEach(scenario => {
+            Object.keys(scenario.extractedVariables || {}).forEach(name => extractedNames.add(name));
+        });
         (config.scenarios || []).forEach((scenario, index) => {
             const pathTemplate = scenario.path || '';
             const bodyTemplate = scenario.body || undefined;
@@ -316,7 +321,9 @@
             // Collect variables from both path and body
             const allTemplates = [pathTemplate, bodyTemplate || ''].join(' ');
             extractPathVariables(allTemplates).forEach(varName => {
-                variables[varName] = { mode: 'static', staticValue: '1', min: 1, max: 100 };
+                variables[varName] = extractedNames.has(varName)
+                    ? { name: varName, mode: 'extracted', staticValue: '', min: 1, max: 100 }
+                    : { name: varName, mode: 'static', staticValue: '1', min: 1, max: 100 };
             });
             scenarioUiState.set(index, { pathTemplate, bodyTemplate, variables });
         });
@@ -392,6 +399,7 @@
                     <div class="var-override" data-var="${varName}">
                         <label class="var-name">{${varName}}</label>
                         <select class="var-mode" onchange="onVarModeChange(${index}, '${varName}', this.value)">
+                            <option value="extracted" ${varState.mode === 'extracted' ? 'selected' : ''}>Extracted at runtime</option>
                             <option value="static" ${varState.mode === 'static' ? 'selected' : ''}>Static Value</option>
                             <option value="random" ${varState.mode === 'random' ? 'selected' : ''}>Random Range</option>
                             <option value="uuid" ${varState.mode === 'uuid' ? 'selected' : ''}>UUID</option>
@@ -443,6 +451,9 @@
     }
 
     function renderVarValueInput(index, varName, varState) {
+        if (varState.mode === 'extracted') {
+            return '<code>${' + varName + '} (from previous flow response)</code>';
+        }
         if (varState.mode === 'static') {
             return `<input type="text" value="${varState.staticValue || '1'}" placeholder="e.g. 101"
                 oninput="onVarStaticChange(${index}, '${varName}', this.value)">`;
