@@ -110,7 +110,8 @@ public class ReactiveLoadExecutionService implements LoadExecutionService {
         return Mono.defer(() -> {
             long reqStart = System.currentTimeMillis();
             String resolvedPath = DynamicVariableResolver.resolve(scenario.path(), flowVariables);
-            String resolvedUri = targetBaseUrl + resolvedPath;
+            String resolvedUri = DynamicVariableResolver.appendQueryParams(
+                    targetBaseUrl + resolvedPath, scenario.queryParams(), flowVariables);
             var resolvedHeaders = DynamicVariableResolver.resolveHeaders(scenario.headers(), flowVariables);
             String resolvedBody = DynamicVariableResolver.resolve(scenario.body(), flowVariables);
 

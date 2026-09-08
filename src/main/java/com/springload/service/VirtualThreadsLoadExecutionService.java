@@ -106,7 +106,8 @@ public class VirtualThreadsLoadExecutionService implements LoadExecutionService 
                                      AtomicLong requestCounter, AtomicLong errorCounter,
                                      List<Long> latencies, SseEmitter emitter) {
         String resolvedPath = DynamicVariableResolver.resolve(scenario.path(), flowVariables);
-            String fullUrl = baseUrl + resolvedPath;
+        String fullUrl = DynamicVariableResolver.appendQueryParams(
+                baseUrl + resolvedPath, scenario.queryParams(), flowVariables);
             String method = scenario.method().toUpperCase();
             var resolvedHeaders = DynamicVariableResolver.resolveHeaders(scenario.headers(), flowVariables);
             String resolvedBody = DynamicVariableResolver.resolve(scenario.body(), flowVariables);

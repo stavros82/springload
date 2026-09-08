@@ -78,4 +78,12 @@ class DynamicVariableResolverTest {
         assertTrue(DynamicVariableResolver.hasUnresolvedVariables("/owners/${ownerId}"));
         assertFalse(DynamicVariableResolver.hasUnresolvedVariables("/owners/42"));
     }
+
+    @Test
+    void appendsAndResolvesQueryParameters() {
+        assertEquals("http://localhost:8080/replenish?quantity=100",
+                DynamicVariableResolver.appendQueryParams(
+                        "http://localhost:8080/replenish",
+                        Map.of("quantity", "100"), Map.of()));
+    }
 }

@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.net.http.HttpHeaders;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -111,6 +113,30 @@ public final class DynamicVariableResolver {
                         (a, b) -> b,
                         java.util.LinkedHashMap::new
                 ));
+    }
+
+    public static String appendQueryParams(String uri, Map<String, String> queryParams,
+                                           Map<String, String> variables) {
+        if (queryParams == null || queryParams.isEmpty()) {
+            return uri;
+        }
+        String separator = uri.contains("?") ? "&" : "?";
+        StringBuilder result = new StringBuilder(uri);
+        for (Map.Entry<String, String> entry : queryParams.entrySet()) {
+            if (entry.getKey() == null || entry.getKey().isBlank()) {
+                continue;
+            }
+            result.append(separator)
+                    .append(encode(resolve(entry.getKey(), variables)))
+                    .append('=')
+                    .append(encode(resolve(entry.getValue(), variables)));
+            separator = "&";
+        }
+        return result.toString();
+    }
+
+    private static String encode(String value) {
+        return URLEncoder.encode(value == null ? "" : value, StandardCharsets.UTF_8);
     }
 
     public static Map<String, String> extract(
