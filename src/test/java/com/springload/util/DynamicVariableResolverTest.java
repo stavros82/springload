@@ -71,4 +71,11 @@ class DynamicVariableResolverTest {
         assertEquals("/customers/42",
                 DynamicVariableResolver.resolve("/customers/{customerId}", extracted));
     }
+
+    @Test
+    void detectsUnresolvedBraceAndDollarVariables() {
+        assertTrue(DynamicVariableResolver.hasUnresolvedVariables("/owners/{ownerId}"));
+        assertTrue(DynamicVariableResolver.hasUnresolvedVariables("/owners/${ownerId}"));
+        assertFalse(DynamicVariableResolver.hasUnresolvedVariables("/owners/42"));
+    }
 }

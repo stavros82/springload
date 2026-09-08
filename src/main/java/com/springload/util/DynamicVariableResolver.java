@@ -87,6 +87,10 @@ public final class DynamicVariableResolver {
         return pathResolved.toString();
     }
 
+    public static boolean hasUnresolvedVariables(String template) {
+        return template != null && (UNRESOLVED.matcher(template).find() || PATH_VARIABLE.matcher(template).find());
+    }
+
     public static Map<String, String> resolveHeaders(Map<String, String> headers) {
         return resolveHeaders(headers, Map.of());
     }
