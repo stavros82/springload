@@ -1,5 +1,11 @@
 package com.springload.util;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import java.net.http.HttpHeaders;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
@@ -18,6 +24,8 @@ public final class DynamicVariableResolver {
     private static final Pattern RANDOM_UUID = Pattern.compile("\\$\\{random\\.uuid}");
     private static final Pattern TIMESTAMP = Pattern.compile("\\$\\{timestamp}");
     private static final Pattern UNRESOLVED = Pattern.compile("\\$\\{[^}]+}");
+    private static final Pattern VARIABLE = Pattern.compile("\\$\\{([^}]+)}");
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     private DynamicVariableResolver() {}
 
@@ -37,6 +45,10 @@ public final class DynamicVariableResolver {
     }
 
     public static String resolve(String template) {
+        return resolve(template, Map.of());
+    }
+
+    public static String resolve(String template, Map<String, String> variables) {
         if (template == null || !template.contains(PLACEHOLDER_PREFIX)) {
             return template;
         }
@@ -54,10 +66,22 @@ public final class DynamicVariableResolver {
 
         result = RANDOM_UUID.matcher(result).replaceAll(match -> UUID.randomUUID().toString());
         result = TIMESTAMP.matcher(result).replaceAll(match -> String.valueOf(System.currentTimeMillis()));
-        return result;
+        Matcher variableMatcher = VARIABLE.matcher(result);
+        StringBuffer resolved = new StringBuffer();
+        while (variableMatcher.find()) {
+            String value = variables.get(variableMatcher.group(1));
+            variableMatcher.appendReplacement(resolved,
+                    value == null ? Matcher.quoteReplacement(variableMatcher.group()) : Matcher.quoteReplacement(value));
+        }
+        variableMatcher.appendTail(resolved);
+        return resolved.toString();
     }
 
     public static Map<String, String> resolveHeaders(Map<String, String> headers) {
+        return resolveHeaders(headers, Map.of());
+    }
+
+    public static Map<String, String> resolveHeaders(Map<String, String> headers, Map<String, String> variables) {
         if (headers == null || headers.isEmpty()) {
             return headers;
         }
@@ -69,10 +93,60 @@ public final class DynamicVariableResolver {
         return headers.entrySet().stream()
                 .collect(java.util.stream.Collectors.toMap(
                         Map.Entry::getKey,
-                        e -> resolve(e.getValue()),
+                        e -> resolve(e.getValue(), variables),
                         (a, b) -> b,
                         java.util.LinkedHashMap::new
                 ));
+    }
+
+    public static Map<String, String> extract(
+            Map<String, String> extractions, String responseBody, Map<String, List<String>> responseHeaders) {
+        Map<String, String> values = new LinkedHashMap<>();
+        if (extractions == null) {
+            return values;
+        }
+        JsonNode json = null;
+        for (Map.Entry<String, String> extraction : extractions.entrySet()) {
+            String selector = extraction.getValue();
+            if (selector == null) {
+                continue;
+            }
+            if (selector.startsWith("header:")) {
+                String headerName = selector.substring("header:".length());
+                responseHeaders.entrySet().stream()
+                        .filter(entry -> entry.getKey().equalsIgnoreCase(headerName))
+                        .findFirst()
+                        .flatMap(entry -> entry.getValue().stream().findFirst())
+                        .ifPresent(value -> values.put(extraction.getKey(), value));
+                continue;
+            }
+            if (responseBody == null || responseBody.isBlank() || !selector.startsWith("$")) {
+                continue;
+            }
+            try {
+                if (json == null) {
+                    json = JSON.readTree(responseBody);
+                }
+                JsonNode value = json;
+                for (String segment : selector.substring(1).split("\\.")) {
+                    if (!segment.isEmpty()) {
+                        value = value.path(segment);
+                    }
+                }
+                if (!value.isMissingNode() && !value.isNull()) {
+                    values.put(extraction.getKey(),
+                            value.isValueNode() ? value.asText() : value.toString());
+                }
+            } catch (Exception ignored) {
+                // A response that does not match an extraction must not corrupt flow state.
+            }
+        }
+        return values;
+    }
+
+    public static Map<String, String> extract(
+            Map<String, String> extractions, String responseBody, HttpHeaders responseHeaders) {
+        return extract(extractions, responseBody, responseHeaders.map());
     }
 
     private static String replaceRandomRanges(String input, Function<Matcher, String> replacer) {

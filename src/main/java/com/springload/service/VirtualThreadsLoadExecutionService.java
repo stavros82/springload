@@ -18,6 +18,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.*;
@@ -73,50 +74,61 @@ public class VirtualThreadsLoadExecutionService implements LoadExecutionService 
                                             List<Long> latencies) {
         Thread.ofPlatform().name("load-generator-", 0).start(() -> {
             try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
-                config.scenarios().stream()
+                List<ScenarioConfig> scenarios = config.scenarios().stream()
                         .filter(s -> s.enabled() && s.isActive())
-                        .forEach(scenario -> submitScenarioTasks(scenario, config, endTime, executor, requestCounter, errorCounter, latencies, emitter));
+                        .toList();
+                for (int i = 0; i < config.execution().concurrency(); i++) {
+                    executor.submit(() -> executeFlowLoop(
+                            scenarios, config.targetBaseUrl(), endTime, requestCounter,
+                            errorCounter, latencies, emitter));
+                }
             }
         });
     }
 
-    private void submitScenarioTasks(ScenarioConfig scenario, StressConfig config, long endTime,
-                                     ExecutorService executor, AtomicLong requestCounter,
-                                     AtomicLong errorCounter, List<Long> latencies, SseEmitter emitter) {
-        log.info("Initializing Virtual Threads for scenario: [{}] {}", scenario.method(), scenario.path());
-
-        for (int i = 0; i < config.execution().concurrency(); i++) {
-            executor.submit(() -> executeScenarioLoop(scenario, config.targetBaseUrl(), endTime, requestCounter, errorCounter, latencies, emitter));
+    private void executeFlowLoop(List<ScenarioConfig> scenarios, String baseUrl, long endTime,
+                                 AtomicLong requestCounter, AtomicLong errorCounter,
+                                 List<Long> latencies, SseEmitter emitter) {
+        Map<String, String> flowVariables = new HashMap<>();
+        while (System.currentTimeMillis() < endTime) {
+            for (ScenarioConfig scenario : scenarios) {
+                if (System.currentTimeMillis() >= endTime) {
+                    return;
+                }
+                executeScenario(scenario, baseUrl, endTime, flowVariables,
+                        requestCounter, errorCounter, latencies, emitter);
+            }
         }
     }
 
-    private void executeScenarioLoop(ScenarioConfig scenario, String baseUrl, long endTime,
+    private void executeScenario(ScenarioConfig scenario, String baseUrl, long endTime,
+                                 Map<String, String> flowVariables,
                                      AtomicLong requestCounter, AtomicLong errorCounter,
                                      List<Long> latencies, SseEmitter emitter) {
-        while (System.currentTimeMillis() < endTime) {
-            String resolvedPath = DynamicVariableResolver.resolve(scenario.path());
+        String resolvedPath = DynamicVariableResolver.resolve(scenario.path(), flowVariables);
             String fullUrl = baseUrl + resolvedPath;
             String method = scenario.method().toUpperCase();
-            var resolvedHeaders = DynamicVariableResolver.resolveHeaders(scenario.headers());
-            String resolvedBody = DynamicVariableResolver.resolve(scenario.body());
+            var resolvedHeaders = DynamicVariableResolver.resolveHeaders(scenario.headers(), flowVariables);
+            String resolvedBody = DynamicVariableResolver.resolve(scenario.body(), flowVariables);
 
             try {
                 HttpRequest request = buildHttpRequest(resolvedHeaders, resolvedBody, fullUrl, method);
                 long reqStart = System.currentTimeMillis();
                 HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
                 long reqDuration = System.currentTimeMillis() - reqStart;
+                flowVariables.putAll(DynamicVariableResolver.extract(
+                        scenario.extractedVariables(), response.body(), response.headers()));
 
                 latencies.add(reqDuration);
                 handleResponse(response, method, fullUrl, reqDuration, requestCounter, errorCounter);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                break;
+                return;
             } catch (Exception e) {
                 long currentErrors = errorCounter.incrementAndGet();
                 log.error("EXECUTION ERROR dispatching to {} {}: {} (Total Errors: {})",
                         method, fullUrl, e.getMessage(), currentErrors, e);
             }
-        }
     }
 
     private HttpRequest buildHttpRequest(Map<String, String> headers, String body, String fullUrl, String method) {

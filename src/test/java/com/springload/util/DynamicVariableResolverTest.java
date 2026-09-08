@@ -3,6 +3,7 @@ package com.springload.util;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
+import java.net.http.HttpHeaders;
 import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -55,5 +56,17 @@ class DynamicVariableResolverTest {
         assertFalse(DynamicVariableResolver.hasCorrelatedVariables("ts=${timestamp}"));
         assertFalse(DynamicVariableResolver.hasCorrelatedVariables("/api/vets/101"));
         assertFalse(DynamicVariableResolver.hasCorrelatedVariables(null));
+    }
+
+    @Test
+    void resolvesExtractedVariablesFromResponse() {
+        Map<String, String> extracted = DynamicVariableResolver.extract(
+                Map.of("customerId", "$.id"),
+                "{\"id\":42}",
+                HttpHeaders.of(Map.of(), (name, value) -> true));
+
+        assertEquals("42", extracted.get("customerId"));
+        assertEquals("/customers/42",
+                DynamicVariableResolver.resolve("/customers/${customerId}", extracted));
     }
 }
