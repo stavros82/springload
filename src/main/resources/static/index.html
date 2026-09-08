@@ -314,12 +314,26 @@
             const pathTemplate = scenario.path || '';
             const bodyTemplate = scenario.body || undefined;
             const variables = {};
+            const queryVariables = {};
             // Collect variables from both path and body
             const allTemplates = [pathTemplate, bodyTemplate || ''].join(' ');
             extractPathVariables(allTemplates).forEach(varName => {
                 variables[varName] = { name: varName, mode: 'static', staticValue: '', referenceName: '', extractedNames, min: 1, max: 100 };
             });
-            scenarioUiState.set(index, { pathTemplate, bodyTemplate, variables });
+            Object.entries(scenario.queryParams || {}).forEach(([key, value]) => {
+                const text = value == null ? '' : String(value);
+                const match = text.match(/^\$\{([^}]+)}$|^\{([^}]+)}$/);
+                queryVariables[key] = {
+                    name: key,
+                    mode: match ? 'reference' : 'static',
+                    staticValue: match ? '' : text,
+                    referenceName: match ? (match[1] || match[2]) : '',
+                    extractedNames,
+                    min: 1,
+                    max: 100
+                };
+            });
+            scenarioUiState.set(index, { pathTemplate, bodyTemplate, variables, queryVariables });
         });
     }
 
@@ -382,6 +396,25 @@
                     </div>`;
             });
         }
+        const queryVars = Object.keys(uiState.queryVariables || {});
+        let queryOverridesHtml = '';
+        if (queryVars.length > 0) {
+            queryOverridesHtml = '<div class="card-section-label">Query Parameter Overrides</div>';
+            queryVars.forEach(varName => {
+                const varState = uiState.queryVariables[varName];
+                queryOverridesHtml += `
+                    <div class="var-override" data-query-var="${varName}">
+                        <label class="var-name">?${varName}</label>
+                        <select class="var-mode" onchange="onQueryVarModeChange(${index}, '${varName}', this.value)">
+                            <option value="static" ${varState.mode === 'static' ? 'selected' : ''}>Static value</option>
+                            ${varState.extractedNames.map(name => `<option value="reference:${name}" ${varState.mode === 'reference' && varState.referenceName === name ? 'selected' : ''}>Flow value: ${name}</option>`).join('')}
+                            <option value="random" ${varState.mode === 'random' ? 'selected' : ''}>Random Range</option>
+                            <option value="uuid" ${varState.mode === 'uuid' ? 'selected' : ''}>UUID</option>
+                        </select>
+                        <div class="var-value-input">${renderVarValueInput(index, varName, varState, true)}</div>
+                    </div>`;
+            });
+        }
 
         const headersJson = JSON.stringify(scenario.headers || {}, null, 2);
         const bodyText = scenario.body || '';
@@ -415,6 +448,7 @@
             </div>
             ${stateHtml}
             ${varOverridesHtml}
+            ${queryOverridesHtml}
             <div class="card-section-label">HTTP Headers (JSON)</div>
             <textarea class="headers-editor" oninput="onHeadersChange(${index}, this.value)">${headersJson}</textarea>
             <div class="card-section-label">Request Body (JSON)</div>
@@ -423,10 +457,11 @@
         return card;
     }
 
-    function renderVarValueInput(index, varName, varState) {
+    function renderVarValueInput(index, varName, varState, isQuery = false) {
         if (varState.mode === 'static') {
+            const handler = isQuery ? 'onQueryVarStaticChange' : 'onVarStaticChange';
             return `<input type="text" value="${varState.staticValue || ''}" placeholder="e.g. 101"
-                oninput="onVarStaticChange(${index}, '${varName}', this.value)">`;
+                oninput="${handler}(${index}, '${varName}', this.value)">`;
         }
         if (varState.mode === 'reference') {
             return `<code>\${${varState.referenceName}}</code>`;
@@ -436,10 +471,10 @@
         }
         return `<span style="display:flex; gap:6px; align-items:center;">
             <input type="number" min="0" value="${varState.min ?? 1}" style="width:70px"
-                oninput="onVarRangeChange(${index}, '${varName}', 'min', this.value)">
+                oninput="${isQuery ? 'onQueryVarRangeChange' : 'onVarRangeChange'}(${index}, '${varName}', 'min', this.value)">
             <span>–</span>
             <input type="number" min="0" value="${varState.max ?? 100}" style="width:70px"
-                oninput="onVarRangeChange(${index}, '${varName}', 'max', this.value)">
+                oninput="${isQuery ? 'onQueryVarRangeChange' : 'onVarRangeChange'}(${index}, '${varName}', 'max', this.value)">
             <code style="font-size:12px;">${'${random('}${varState.min ?? 1}-${varState.max ?? 100})}</code>
         </span>`;
     }
@@ -501,6 +536,35 @@
         updateCompiledPathDisplay(index);
     }
 
+    function onQueryVarModeChange(index, varName, mode) {
+        const uiState = scenarioUiState.get(index);
+        if (!uiState) return;
+        const variable = uiState.queryVariables[varName];
+        if (mode.startsWith('reference:')) {
+            variable.mode = 'reference';
+            variable.referenceName = mode.substring('reference:'.length);
+        } else {
+            variable.mode = mode;
+            variable.referenceName = '';
+        }
+        refreshScenarioCard(index);
+        syncCompiledPaths();
+    }
+
+    function onQueryVarStaticChange(index, varName, value) {
+        const uiState = scenarioUiState.get(index);
+        if (!uiState) return;
+        uiState.queryVariables[varName].staticValue = value;
+        syncCompiledPaths();
+    }
+
+    function onQueryVarRangeChange(index, varName, bound, value) {
+        const uiState = scenarioUiState.get(index);
+        if (!uiState) return;
+        uiState.queryVariables[varName][bound] = Number.parseInt(value, 10) || 0;
+        syncCompiledPaths();
+    }
+
     function onHeadersChange(index, value) {
         if (!currentConfig || !currentConfig.scenarios[index]) return;
         try {
@@ -541,6 +605,10 @@
             const uiState = scenarioUiState.get(index);
             if (uiState) {
                 scenario.path = compilePathFromTemplate(uiState.pathTemplate, uiState.variables);
+                scenario.queryParams = {};
+                Object.entries(uiState.queryVariables || {}).forEach(([name, state]) => {
+                    scenario.queryParams[name] = compileVariableValue(state);
+                });
                 if (uiState.bodyTemplate !== undefined) {
                     scenario.body = compileBodyFromTemplate(uiState.bodyTemplate, uiState.variables);
                 }
