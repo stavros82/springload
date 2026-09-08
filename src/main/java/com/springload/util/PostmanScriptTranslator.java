@@ -17,6 +17,9 @@ public class PostmanScriptTranslator {
     private static final Pattern SET_PATTERN = Pattern.compile(
         "pm\\.(environment|globals|variables)\\.set\\(\\s*[\"']([^\"']+)[\"']\\s*,\\s*(.+)\\s*\\);?\\s*$"
     );
+    private static final Pattern LOCAL_ASSIGNMENT_PATTERN = Pattern.compile(
+        "(?:const|let|var)\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s*=\\s*(.+?)\\s*;?\\s*$"
+    );
     private static final Pattern JSON_ACCESS_PATTERN = Pattern.compile(
         "pm\\.response\\.json\\(\\)(?:\\.([a-zA-Z0-9_$.]+)|\\[[\"']([^\"']+)[\"']\\])?"
     );
@@ -31,6 +34,7 @@ public class PostmanScriptTranslator {
      */
     public static Map<String, String> translate(List<String> scriptLines) {
         Map<String, String> extractions = new HashMap<>();
+        Map<String, String> localExpressions = new HashMap<>();
         if (scriptLines == null) {
             return extractions;
         }
@@ -39,10 +43,18 @@ public class PostmanScriptTranslator {
             if (line.isEmpty() || line.startsWith("//") || line.startsWith("/*")) {
                 continue;
             }
+
+            Matcher assignmentMatcher = LOCAL_ASSIGNMENT_PATTERN.matcher(line);
+            if (assignmentMatcher.matches()) {
+                localExpressions.put(assignmentMatcher.group(1), assignmentMatcher.group(2).trim());
+                continue;
+            }
+
             Matcher setMatcher = SET_PATTERN.matcher(line);
             if (setMatcher.find()) {
                 String varName = setMatcher.group(2);
                 String valueExpression = setMatcher.group(3).trim();
+                valueExpression = localExpressions.getOrDefault(valueExpression, valueExpression);
 
                 // Balance parentheses: if closing paren count exceeds opening, remove the last one
                 if (valueExpression.endsWith(")")) {

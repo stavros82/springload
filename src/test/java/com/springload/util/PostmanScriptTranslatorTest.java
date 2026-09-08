@@ -49,6 +49,18 @@ class PostmanScriptTranslatorTest {
     }
 
     @Test
+    void translatesExtractionFromLocalScriptVariable() {
+        List<String> script = List.of(
+            "let id = pm.response.json().data.createCategory.id;",
+            "pm.environment.set(\"categoryId\", id);"
+        );
+
+        Map<String, String> result = PostmanScriptTranslator.translate(script);
+
+        assertEquals(Map.of("categoryId", "$.data.createCategory.id"), result);
+    }
+
+    @Test
     void ignoresCommentLines() {
         List<String> script = List.of(
             "// Extract the user ID",
