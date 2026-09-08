@@ -77,6 +77,13 @@
         .weight-summary.valid { color: #4ade80; }
         .weight-summary.invalid { color: #fbbf24; }
         .card-section-label { font-size: 13px; color: #64748b; text-transform: uppercase; margin: 14px 0 6px; letter-spacing: 0.05em; }
+        .state-summary { display: flex; align-items: center; gap: 10px; margin: 12px 0 16px; padding: 10px 12px; border-radius: 6px; background: #0f172a; border: 1px solid #334155; color: #cbd5e1; }
+        .state-badge { display: inline-block; padding: 4px 9px; border-radius: 999px; font-size: 12px; font-weight: bold; }
+        .stateful { background: #7c3aed; color: #fff; }
+        .stateless { background: #475569; color: #e2e8f0; }
+        .extraction-list { margin: 8px 0 0; padding: 0; list-style: none; }
+        .extraction-list li { display: flex; gap: 8px; align-items: baseline; padding: 5px 0; color: #cbd5e1; font-size: 13px; }
+        .extraction-list code { color: #c4b5fd; }
     </style>
 </head>
 <body>
@@ -116,6 +123,7 @@
     <!-- 2. Scenario Inspector Studio (revealed after successful parse) -->
     <div class="card" id="scenario-studio" style="display: none;">
         <h3>2. Scenario Inspector Studio</h3>
+        <div id="state-summary" class="state-summary" aria-live="polite"></div>
 
         <div class="grid-3">
             <div class="form-group">
@@ -341,10 +349,30 @@
             });
         }
 
+        renderStateSummary(config.scenarios || []);
         updateWeightValidation();
         syncCompiledPaths();
         document.getElementById('configOutput').innerText = JSON.stringify(config, null, 2);
         document.getElementById('scenario-studio').style.display = 'block';
+    }
+
+    function renderStateSummary(scenarios) {
+        const summary = document.getElementById('state-summary');
+        const statefulScenarios = scenarios.filter(scenario =>
+            scenario.extractedVariables && Object.keys(scenario.extractedVariables).length > 0
+        );
+        const extractionCount = statefulScenarios.reduce((total, scenario) =>
+            total + Object.keys(scenario.extractedVariables || {}).length, 0
+        );
+        const isStateful = statefulScenarios.length > 0;
+        summary.innerHTML = `
+            <span class="state-badge ${isStateful ? 'stateful' : 'stateless'}">
+                ${isStateful ? 'STATEFUL' : 'STATELESS'}
+            </span>
+            <span>${isStateful
+                ? `${statefulScenarios.length} scenario(s), ${extractionCount} extracted variable(s)`
+                : 'No deterministic variable extractions detected'}</span>
+        `;
     }
 
     function buildScenarioCard(scenario, index) {
@@ -375,6 +403,15 @@
 
         const headersJson = JSON.stringify(scenario.headers || {}, null, 2);
         const bodyText = scenario.body || '';
+        const extractedVariables = scenario.extractedVariables || {};
+        const extractionEntries = Object.entries(extractedVariables);
+        const stateHtml = extractionEntries.length > 0
+            ? `<div class="card-section-label">Stateful Extractions</div>
+               <span class="state-badge stateful">STATEFUL</span>
+               <ul class="extraction-list">${extractionEntries.map(([name, selector]) =>
+                    `<li><code>${name}</code><span>←</span><code>${selector}</code></li>`
+               ).join('')}</ul>`
+            : '<div style="margin-top:12px;"><span class="state-badge stateless">STATELESS</span></div>';
 
         card.innerHTML = `
             <div class="scenario-card-header">
@@ -395,6 +432,7 @@
                        class="weight-slider" oninput="onWeightChange(${index}, this.value)">
                 <span class="weight-val">${scenario.weight || 0}%</span>
             </div>
+            ${stateHtml}
             ${varOverridesHtml}
             <div class="card-section-label">HTTP Headers (JSON)</div>
             <textarea class="headers-editor" oninput="onHeadersChange(${index}, this.value)">${headersJson}</textarea>
