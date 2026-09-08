@@ -428,6 +428,9 @@
             return `<input type="text" value="${varState.staticValue || ''}" placeholder="e.g. 101"
                 oninput="onVarStaticChange(${index}, '${varName}', this.value)">`;
         }
+        if (varState.mode === 'reference') {
+            return `<code>\${${varState.referenceName}}</code>`;
+        }
         if (varState.mode === 'uuid') {
             return '<code>${random.uuid}</code>';
         }
