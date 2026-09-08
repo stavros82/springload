@@ -296,4 +296,27 @@ class PostmanParserStrategyTest {
     void rejectsCollectionWithoutItems() {
         assertThrows(RuntimeException.class, () -> parse("{\"info\": {\"name\": \"Empty\"}}"));
     }
+
+    @Test
+    void removesUndefinedBaseUrlPlaceholderFromRequestPath() {
+        String json = """
+                {
+                  "info": { "name": "Base URL Placeholder" },
+                  "item": [
+                    {
+                      "name": "GraphQL",
+                      "request": {
+                        "method": "POST",
+                        "url": { "raw": "{{baseUrl}}/graphql" }
+                      }
+                    }
+                  ]
+                }
+                """;
+
+        StressConfig config = parse(json);
+
+        assertEquals("http://localhost:8080", config.targetBaseUrl());
+        assertEquals("/graphql", config.scenarios().getFirst().path());
+    }
 }

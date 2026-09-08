@@ -93,15 +93,6 @@ public class VirtualThreadsLoadExecutionService implements LoadExecutionService 
     private void executeScenarioLoop(ScenarioConfig scenario, String baseUrl, long endTime,
                                      AtomicLong requestCounter, AtomicLong errorCounter,
                                      List<Long> latencies, SseEmitter emitter) {
-        if (DynamicVariableResolver.hasCorrelatedVariables(scenario.body())
-                || DynamicVariableResolver.hasCorrelatedVariables(scenario.path())) {
-            String msg = "Scenario '" + scenario.name() + "' skipped — contains correlated variables (stateful extraction not supported in stateless mode)";
-            log.warn(msg);
-            try {
-                emitter.send(SseEmitter.event().name("warning").data(Map.of("skippedScenario", scenario.name(), "reason", msg)));
-            } catch (Exception ignored) {}
-            return;
-        }
         while (System.currentTimeMillis() < endTime) {
             String resolvedPath = DynamicVariableResolver.resolve(scenario.path());
             String fullUrl = baseUrl + resolvedPath;

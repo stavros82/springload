@@ -100,15 +100,6 @@ public class ReactiveLoadExecutionService implements LoadExecutionService {
                                             AtomicLong errorCounter,
                                             List<Long> latencies,
                                             SseEmitter emitter) {
-        if (DynamicVariableResolver.hasCorrelatedVariables(scenario.body())
-                || DynamicVariableResolver.hasCorrelatedVariables(scenario.path())) {
-            String msg = "Scenario '" + scenario.name() + "' skipped — contains correlated variables (stateful extraction not supported in stateless mode)";
-            log.warn(msg);
-            try {
-                emitter.send(SseEmitter.event().name("warning").data(Map.of("skippedScenario", scenario.name(), "reason", msg)));
-            } catch (Exception ignored) {}
-            return Mono.empty();
-        }
         return Mono.defer(() -> {
             long reqStart = System.currentTimeMillis();
             String resolvedPath = DynamicVariableResolver.resolve(scenario.path());

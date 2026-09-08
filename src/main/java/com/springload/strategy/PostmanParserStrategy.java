@@ -400,6 +400,13 @@ public class PostmanParserStrategy implements StressConfigParserStrategy {
             }
         }
         for (ScenarioConfig scenario : scenarios) {
+            String path = scenario.path();
+            if (path.startsWith("{{baseUrl}}") || path.startsWith("{{base_url}}")
+                    || path.startsWith("{{host}}") || path.startsWith("{{url}}")) {
+                return new BaseUrl(DEFAULT_BASE_URL, path.substring(0, path.indexOf("}}") + 2));
+            }
+        }
+        for (ScenarioConfig scenario : scenarios) {
             String origin = extractOrigin(scenario.path());
             if (origin != null) {
                 return new BaseUrl(origin, null);
