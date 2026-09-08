@@ -77,10 +77,6 @@
         .weight-summary.valid { color: #4ade80; }
         .weight-summary.invalid { color: #fbbf24; }
         .card-section-label { font-size: 13px; color: #64748b; text-transform: uppercase; margin: 14px 0 6px; letter-spacing: 0.05em; }
-        .state-summary { display: flex; align-items: center; gap: 10px; margin: 12px 0 16px; padding: 10px 12px; border-radius: 6px; background: #0f172a; border: 1px solid #334155; color: #cbd5e1; }
-        .state-badge { display: inline-block; padding: 4px 9px; border-radius: 999px; font-size: 12px; font-weight: bold; }
-        .stateful { background: #7c3aed; color: #fff; }
-        .stateless { background: #475569; color: #e2e8f0; }
         .extraction-list { margin: 8px 0 0; padding: 0; list-style: none; }
         .extraction-list li { display: flex; gap: 8px; align-items: baseline; padding: 5px 0; color: #cbd5e1; font-size: 13px; }
         .extraction-list code { color: #c4b5fd; }
@@ -123,8 +119,6 @@
     <!-- 2. Scenario Inspector Studio (revealed after successful parse) -->
     <div class="card" id="scenario-studio" style="display: none;">
         <h3>2. Scenario Inspector Studio</h3>
-        <div id="state-summary" class="state-summary" aria-live="polite"></div>
-
         <div class="grid-3">
             <div class="form-group">
                 <label for="targetBaseUrl">Target Base URL</label>
@@ -288,15 +282,15 @@
     }
 
     function compileVariableValue(varState) {
-        if (varState.mode === 'extracted') return '${' + varState.name + '}';
-        if (varState.mode === 'static') return varState.staticValue || '1';
+        if (varState.mode === 'reference') return '${' + varState.referenceName + '}';
+        if (varState.mode === 'static') return varState.staticValue || '{' + varState.name + '}';
         if (varState.mode === 'uuid') return '${random.uuid}';
         if (varState.mode === 'random') {
             const min = Number.parseInt(varState.min, 10) || 1;
             const max = Number.parseInt(varState.max, 10) || 100;
             return '${random(' + min + '-' + max + ')}';
         }
-        return '1';
+        return '{' + varState.name + '}';
     }
 
     function compilePathFromTemplate(pathTemplate, variables) {
@@ -310,9 +304,11 @@
 
     function initScenarioUiState(config) {
         scenarioUiState.clear();
-        const extractedNames = new Set();
+        const extractedNames = [];
         (config.scenarios || []).forEach(scenario => {
-            Object.keys(scenario.extractedVariables || {}).forEach(name => extractedNames.add(name));
+            Object.keys(scenario.extractedVariables || {}).forEach(name => {
+                if (!extractedNames.includes(name)) extractedNames.push(name);
+            });
         });
         (config.scenarios || []).forEach((scenario, index) => {
             const pathTemplate = scenario.path || '';
@@ -321,9 +317,7 @@
             // Collect variables from both path and body
             const allTemplates = [pathTemplate, bodyTemplate || ''].join(' ');
             extractPathVariables(allTemplates).forEach(varName => {
-                variables[varName] = extractedNames.has(varName)
-                    ? { name: varName, mode: 'extracted', staticValue: '', min: 1, max: 100 }
-                    : { name: varName, mode: 'static', staticValue: '1', min: 1, max: 100 };
+                variables[varName] = { name: varName, mode: 'static', staticValue: '', referenceName: '', extractedNames, min: 1, max: 100 };
             });
             scenarioUiState.set(index, { pathTemplate, bodyTemplate, variables });
         });
@@ -356,30 +350,10 @@
             });
         }
 
-        renderStateSummary(config.scenarios || []);
         updateWeightValidation();
         syncCompiledPaths();
         document.getElementById('configOutput').innerText = JSON.stringify(config, null, 2);
         document.getElementById('scenario-studio').style.display = 'block';
-    }
-
-    function renderStateSummary(scenarios) {
-        const summary = document.getElementById('state-summary');
-        const statefulScenarios = scenarios.filter(scenario =>
-            scenario.extractedVariables && Object.keys(scenario.extractedVariables).length > 0
-        );
-        const extractionCount = statefulScenarios.reduce((total, scenario) =>
-            total + Object.keys(scenario.extractedVariables || {}).length, 0
-        );
-        const isStateful = statefulScenarios.length > 0;
-        summary.innerHTML = `
-            <span class="state-badge ${isStateful ? 'stateful' : 'stateless'}">
-                ${isStateful ? 'STATEFUL' : 'STATELESS'}
-            </span>
-            <span>${isStateful
-                ? `${statefulScenarios.length} scenario(s), ${extractionCount} extracted variable(s)`
-                : 'No deterministic variable extractions detected'}</span>
-        `;
     }
 
     function buildScenarioCard(scenario, index) {
@@ -399,8 +373,8 @@
                     <div class="var-override" data-var="${varName}">
                         <label class="var-name">{${varName}}</label>
                         <select class="var-mode" onchange="onVarModeChange(${index}, '${varName}', this.value)">
-                            <option value="extracted" ${varState.mode === 'extracted' ? 'selected' : ''}>Extracted at runtime</option>
-                            <option value="static" ${varState.mode === 'static' ? 'selected' : ''}>Static Value</option>
+                            <option value="static" ${varState.mode === 'static' ? 'selected' : ''}>Static value</option>
+                            ${varState.extractedNames.map(name => `<option value="reference:${name}" ${varState.mode === 'reference' && varState.referenceName === name ? 'selected' : ''}>Flow value: ${name}</option>`).join('')}
                             <option value="random" ${varState.mode === 'random' ? 'selected' : ''}>Random Range</option>
                             <option value="uuid" ${varState.mode === 'uuid' ? 'selected' : ''}>UUID</option>
                         </select>
@@ -414,12 +388,11 @@
         const extractedVariables = scenario.extractedVariables || {};
         const extractionEntries = Object.entries(extractedVariables);
         const stateHtml = extractionEntries.length > 0
-            ? `<div class="card-section-label">Stateful Extractions</div>
-               <span class="state-badge stateful">STATEFUL</span>
+            ? `<div class="card-section-label">Available flow values</div>
                <ul class="extraction-list">${extractionEntries.map(([name, selector]) =>
                     `<li><code>${name}</code><span>←</span><code>${selector}</code></li>`
                ).join('')}</ul>`
-            : '<div style="margin-top:12px;"><span class="state-badge stateless">STATELESS</span></div>';
+            : '';
 
         card.innerHTML = `
             <div class="scenario-card-header">
@@ -451,11 +424,8 @@
     }
 
     function renderVarValueInput(index, varName, varState) {
-        if (varState.mode === 'extracted') {
-            return '<code>${' + varName + '} (from previous flow response)</code>';
-        }
         if (varState.mode === 'static') {
-            return `<input type="text" value="${varState.staticValue || '1'}" placeholder="e.g. 101"
+            return `<input type="text" value="${varState.staticValue || ''}" placeholder="e.g. 101"
                 oninput="onVarStaticChange(${index}, '${varName}', this.value)">`;
         }
         if (varState.mode === 'uuid') {
@@ -500,7 +470,14 @@
     function onVarModeChange(index, varName, mode) {
         const uiState = scenarioUiState.get(index);
         if (!uiState) return;
-        uiState.variables[varName].mode = mode;
+        const variable = uiState.variables[varName];
+        if (mode.startsWith('reference:')) {
+            variable.mode = 'reference';
+            variable.referenceName = mode.substring('reference:'.length);
+        } else {
+            variable.mode = mode;
+            variable.referenceName = '';
+        }
         refreshScenarioCard(index);
         syncCompiledPaths();
     }
