@@ -68,9 +68,12 @@ public class ReactiveLoadExecutionService implements LoadExecutionService {
                                                 SseEmitter emitter,
                                                 LocalDateTime startTime,
                                                 long durationSec) {
-        Flux.fromIterable(config.scenarios())
+        List<ScenarioConfig> scenarios = config.scenarios().stream()
                 .filter(s -> s.enabled() && s.isActive())
-                .flatMap(scenario -> createScenarioFlux(scenario, config, requestCounter, errorCounter, latencies, durationSec, emitter))
+                .toList();
+        Flux.range(0, config.execution().concurrency())
+                .flatMap(i -> createFlowFlux(scenarios, config.targetBaseUrl(), requestCounter,
+                        errorCounter, latencies, durationSec, emitter))
                 .subscribeOn(Schedulers.boundedElastic())
                 .subscribe(
                         null,
@@ -79,43 +82,43 @@ public class ReactiveLoadExecutionService implements LoadExecutionService {
                 );
     }
 
-    private Flux<Void> createScenarioFlux(ScenarioConfig scenario,
-                                          StressConfig config,
+    private Flux<Void> createFlowFlux(List<ScenarioConfig> scenarios,
+                                          String targetBaseUrl,
                                           AtomicLong requestCounter,
                                           AtomicLong errorCounter,
                                           List<Long> latencies,
                                           long durationSec,
                                           SseEmitter emitter) {
-        int concurrency = config.execution().concurrency();
-        return Flux.range(0, concurrency)
-                .flatMap(i -> executeSingleRequest(scenario, config.targetBaseUrl(), requestCounter, errorCounter, latencies, emitter)
-                        .repeat()
-                        .take(Duration.ofSeconds(durationSec))
-                );
+        return Flux.defer(() -> {
+            Map<String, String> flowVariables = new HashMap<>();
+            return Flux.fromIterable(scenarios)
+                    .concatMap(scenario -> executeSingleRequest(
+                            scenario, targetBaseUrl, flowVariables, requestCounter,
+                            errorCounter, latencies, emitter))
+                    .repeat()
+                    .take(Duration.ofSeconds(durationSec));
+        });
     }
 
     private Mono<Void> executeSingleRequest(ScenarioConfig scenario,
                                             String targetBaseUrl,
+                                            Map<String, String> flowVariables,
                                             AtomicLong requestCounter,
                                             AtomicLong errorCounter,
                                             List<Long> latencies,
                                             SseEmitter emitter) {
-        if (DynamicVariableResolver.hasCorrelatedVariables(scenario.body())
-                || DynamicVariableResolver.hasCorrelatedVariables(scenario.path())) {
-            String msg = "Scenario '" + scenario.name() + "' skipped — contains correlated variables (stateful extraction not supported in stateless mode)";
-            log.warn(msg);
-            try {
-                emitter.send(SseEmitter.event().name("warning").data(Map.of("skippedScenario", scenario.name(), "reason", msg)));
-            } catch (Exception ignored) {}
-            return Mono.empty();
-        }
         return Mono.defer(() -> {
             long reqStart = System.currentTimeMillis();
-            String resolvedPath = DynamicVariableResolver.resolve(scenario.path());
-            String resolvedUri = targetBaseUrl + resolvedPath;
-            var resolvedHeaders = DynamicVariableResolver.resolveHeaders(scenario.headers());
-            String resolvedBody = DynamicVariableResolver.resolve(scenario.body());
+            String resolvedPath = DynamicVariableResolver.resolve(scenario.path(), flowVariables);
+            String resolvedUri = DynamicVariableResolver.appendQueryParams(
+                    targetBaseUrl + resolvedPath, scenario.queryParams(), flowVariables);
+            var resolvedHeaders = DynamicVariableResolver.resolveHeaders(scenario.headers(), flowVariables);
+            String resolvedBody = DynamicVariableResolver.resolve(scenario.body(), flowVariables);
 
+            if (DynamicVariableResolver.hasUnresolvedVariables(resolvedPath)) {
+                return Mono.error(new IllegalArgumentException("Unresolved flow variable in path '"
+                        + scenario.path() + "'. Ensure the extracting scenario is enabled and runs before this request."));
+            }
             WebClient.RequestBodySpec bodySpec = webClient
                     .method(HttpMethod.valueOf(scenario.method().toUpperCase()))
                     .uri(resolvedUri);
@@ -127,10 +130,14 @@ public class ReactiveLoadExecutionService implements LoadExecutionService {
                     : bodySpec;
 
             return requestSpec
-                    .exchangeToMono(response -> {
-                        recordLatencyAndStatus(response.statusCode().is2xxSuccessful(), reqStart, latencies, requestCounter, errorCounter);
-                        return response.releaseBody();
-                    })
+                    .exchangeToMono(response -> response.bodyToMono(String.class)
+                            .defaultIfEmpty("")
+                            .doOnNext(body -> flowVariables.putAll(DynamicVariableResolver.extract(
+                                    scenario.extractedVariables(), body, response.headers().asHttpHeaders())))
+                            .doOnNext(body -> recordLatencyAndStatus(
+                                    response.statusCode().is2xxSuccessful(), reqStart, latencies,
+                                    requestCounter, errorCounter))
+                            .then())
                     .onErrorResume(e -> {
                         errorCounter.incrementAndGet();
                         return Mono.empty();

@@ -63,6 +63,45 @@ class JmeterParserStrategyTest {
     }
 
     @Test
+    void resolvesUserDefinedVariablesInBaseUrl() {
+        String jmx = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <jmeterTestPlan version="1.2" properties="5.0">
+                  <hashTree>
+                    <TestPlan testname="Catalog">
+                      <elementProp name="TestPlan.user_defined_variables" elementType="Arguments">
+                        <collectionProp name="Arguments.arguments">
+                          <elementProp name="HOST" elementType="Argument">
+                            <stringProp name="Argument.name">HOST</stringProp>
+                            <stringProp name="Argument.value">${__P(host,localhost)}</stringProp>
+                          </elementProp>
+                          <elementProp name="PORT" elementType="Argument">
+                            <stringProp name="Argument.name">PORT</stringProp>
+                            <stringProp name="Argument.value">${__P(port,8080)}</stringProp>
+                          </elementProp>
+                        </collectionProp>
+                      </elementProp>
+                    </TestPlan>
+                    <hashTree>
+                      <HTTPSamplerProxy testname="GraphQL">
+                        <stringProp name="HTTPSampler.domain">${HOST}</stringProp>
+                        <stringProp name="HTTPSampler.port">${PORT}</stringProp>
+                        <stringProp name="HTTPSampler.protocol">http</stringProp>
+                        <stringProp name="HTTPSampler.path">/graphql</stringProp>
+                        <stringProp name="HTTPSampler.method">POST</stringProp>
+                      </HTTPSamplerProxy>
+                    </hashTree>
+                  </hashTree>
+                </jmeterTestPlan>
+                """;
+
+        StressConfig config = parseXml(jmx);
+
+        assertEquals("http://localhost:8080", config.targetBaseUrl());
+        assertEquals("/graphql", config.scenarios().getFirst().path());
+    }
+
+    @Test
     void parsesPetclinicBenchmarkFile() throws Exception {
         StressConfig config = parseResource("petclinic-jmeter-crud-benchmark.jmx");
 
@@ -184,5 +223,94 @@ class JmeterParserStrategyTest {
     @Test
     void throwsOnMalformedXml() {
         assertThrows(RuntimeException.class, () -> parseXml("<not valid xml"));
+    }
+
+    @Test
+    void extractsVariablesFromJsonPostProcessor() {
+        String jmx = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <jmeterTestPlan version="1.2" properties="5.0">
+                  <hashTree>
+                    <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Get User" enabled="true">
+                      <stringProp name="HTTPSampler.domain">api.example.com</stringProp>
+                      <stringProp name="HTTPSampler.protocol">http</stringProp>
+                      <stringProp name="HTTPSampler.path">/users/123</stringProp>
+                      <stringProp name="HTTPSampler.method">GET</stringProp>
+                    </HTTPSamplerProxy>
+                    <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract Data" enabled="true">
+                      <stringProp name="JSONPostProcessor.referenceNames">userId;userName</stringProp>
+                      <stringProp name="JSONPostProcessor.jsonPathExprs">$.id;$.name</stringProp>
+                    </JSONPostProcessor>
+                  </hashTree>
+                </jmeterTestPlan>
+                """;
+
+        StressConfig config = parseXml(jmx);
+        ScenarioConfig scenario = config.scenarios().getFirst();
+
+        assertEquals(2, scenario.extractedVariables().size());
+        assertEquals("$.id", scenario.extractedVariables().get("userId"));
+        assertEquals("$.name", scenario.extractedVariables().get("userName"));
+    }
+
+    @Test
+    void extractsVariablesFromRegexExtractor() {
+        String jmx = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <jmeterTestPlan version="1.2" properties="5.0">
+                  <hashTree>
+                    <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Login" enabled="true">
+                      <stringProp name="HTTPSampler.domain">api.example.com</stringProp>
+                      <stringProp name="HTTPSampler.protocol">http</stringProp>
+                      <stringProp name="HTTPSampler.path">/login</stringProp>
+                      <stringProp name="HTTPSampler.method">POST</stringProp>
+                    </HTTPSamplerProxy>
+                    <RegexExtractor guiclass="RegexExtractorGui" testclass="RegexExtractor" testname="Extract Token" enabled="true">
+                      <stringProp name="RegexExtractor.refname">authToken</stringProp>
+                      <stringProp name="RegexExtractor.regexp">token":"([^"]+)"</stringProp>
+                      <stringProp name="RegexExtractor.template">$1$</stringProp>
+                    </RegexExtractor>
+                  </hashTree>
+                </jmeterTestPlan>
+                """;
+
+        StressConfig config = parseXml(jmx);
+        ScenarioConfig scenario = config.scenarios().getFirst();
+
+        assertEquals(1, scenario.extractedVariables().size());
+        assertEquals("token\":\"([^\"]+)\"|$1$", scenario.extractedVariables().get("authToken"));
+    }
+
+    @Test
+    void extractsMultiplePostProcessors() {
+        String jmx = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <jmeterTestPlan version="1.2" properties="5.0">
+                  <hashTree>
+                    <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="API Call" enabled="true">
+                      <stringProp name="HTTPSampler.domain">api.example.com</stringProp>
+                      <stringProp name="HTTPSampler.protocol">http</stringProp>
+                      <stringProp name="HTTPSampler.path">/api/data</stringProp>
+                      <stringProp name="HTTPSampler.method">GET</stringProp>
+                    </HTTPSamplerProxy>
+                    <JSONPostProcessor guiclass="JSONPostProcessorGui" testclass="JSONPostProcessor" testname="Extract IDs" enabled="true">
+                      <stringProp name="JSONPostProcessor.referenceNames">id</stringProp>
+                      <stringProp name="JSONPostProcessor.jsonPathExprs">$.id</stringProp>
+                    </JSONPostProcessor>
+                    <RegexExtractor guiclass="RegexExtractorGui" testclass="RegexExtractor" testname="Extract Code" enabled="true">
+                      <stringProp name="RegexExtractor.refname">statusCode</stringProp>
+                      <stringProp name="RegexExtractor.regexp">code=([0-9]+)</stringProp>
+                      <stringProp name="RegexExtractor.template">$1$</stringProp>
+                    </RegexExtractor>
+                  </hashTree>
+                </jmeterTestPlan>
+                """;
+
+        StressConfig config = parseXml(jmx);
+        ScenarioConfig scenario = config.scenarios().getFirst();
+
+        assertEquals(2, scenario.extractedVariables().size());
+        assertEquals("$.id", scenario.extractedVariables().get("id"));
+        assertEquals("code=([0-9]+)|$1$", scenario.extractedVariables().get("statusCode"));
     }
 }

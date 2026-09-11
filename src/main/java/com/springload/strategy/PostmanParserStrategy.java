@@ -6,6 +6,7 @@ import com.springload.dto.ExecutionSettings;
 import com.springload.dto.ScenarioConfig;
 import com.springload.dto.StressConfig;
 import com.springload.dto.Thresholds;
+import com.springload.util.PostmanScriptTranslator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -127,6 +128,7 @@ public class PostmanParserStrategy implements StressConfigParserStrategy {
         applyAuthHeader(request.path("auth"), headers);
         Map<String, String> queryParams = extractQueryParams(request.path("url"));
         String body = extractBody(request.path("body"), headers);
+        Map<String, String> extractedVariables = extractTestScriptVariables(item.path("event"));
 
         String itemName = item.path("name").asText(method + " " + url);
         String scenarioName = folderPath.isEmpty() ? itemName : folderPath + " / " + itemName;
@@ -142,7 +144,7 @@ public class PostmanParserStrategy implements StressConfigParserStrategy {
                 body,
                 true,
                 true,
-                new HashMap<>()
+                extractedVariables
         );
     }
 
@@ -293,6 +295,51 @@ public class PostmanParserStrategy implements StressConfigParserStrategy {
         };
     }
 
+    /**
+     * Extracts variable definitions from Postman test scripts in event blocks.
+     * Scans for events where listen == "test" and translates their scripts.
+     *
+     * @param eventNode The event array from a Postman request
+     * @return Map of variable names to their extract expressions
+     */
+    private Map<String, String> extractTestScriptVariables(JsonNode eventNode) {
+        Map<String, String> allExtracted = new LinkedHashMap<>();
+        if (!eventNode.isArray()) {
+            return allExtracted;
+        }
+
+        for (JsonNode event : eventNode) {
+            String listen = event.path("listen").asText("");
+            if (!"test".equals(listen)) {
+                continue;
+            }
+
+            JsonNode script = event.path("script");
+            if (script.isMissingNode()) {
+                continue;
+            }
+
+            List<String> scriptLines = new ArrayList<>();
+            JsonNode exec = script.path("exec");
+            if (exec.isArray()) {
+                for (JsonNode line : exec) {
+                    if (line.isTextual()) {
+                        scriptLines.add(line.asText());
+                    }
+                }
+            } else if (exec.isTextual()) {
+                // Single line script
+                scriptLines.add(exec.asText());
+            }
+
+            // Translate the script lines and merge results
+            Map<String, String> translated = PostmanScriptTranslator.translate(scriptLines);
+            allExtracted.putAll(translated);
+        }
+
+        return allExtracted;
+    }
+
     private String rawContentType(JsonNode bodyNode) {
         String language = bodyNode.path("options").path("raw").path("language").asText("json");
         return switch (language) {
@@ -350,6 +397,13 @@ public class PostmanParserStrategy implements StressConfigParserStrategy {
             if ((key.equals("baseurl") || key.equals("base_url") || key.equals("url") || key.equals("host"))
                     && entry.getValue() != null && !entry.getValue().isBlank()) {
                 return new BaseUrl(trimTrailingSlash(translate(entry.getValue())), "{{" + entry.getKey() + "}}");
+            }
+        }
+        for (ScenarioConfig scenario : scenarios) {
+            String path = scenario.path();
+            if (path.startsWith("{{baseUrl}}") || path.startsWith("{{base_url}}")
+                    || path.startsWith("{{host}}") || path.startsWith("{{url}}")) {
+                return new BaseUrl(DEFAULT_BASE_URL, path.substring(0, path.indexOf("}}") + 2));
             }
         }
         for (ScenarioConfig scenario : scenarios) {
