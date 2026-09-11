@@ -126,7 +126,10 @@ public class SwaggerParserStrategy implements StressConfigParserStrategy {
                 bodyJson,
                 true,
                 true,
-                extractedVariables
+                extractedVariables,
+                null,
+                null,
+                null
         );
 
 

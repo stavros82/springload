@@ -20,7 +20,7 @@ import java.util.regex.Pattern;
 public class YamlParserStrategy implements StressConfigParserStrategy {
 
     private static final Logger log = LoggerFactory.getLogger(YamlParserStrategy.class);
-    private static final Pattern PLACEHOLDER = Pattern.compile("\\$*\\{([^{}]+)}");
+    private static final Pattern PLACEHOLDER = Pattern.compile("(\\$*)\\{([^{}]+)}");
     private static final Pattern COLON_SEGMENT = Pattern.compile("/:([A-Za-z0-9_-]+)");
     private static final Pattern DYNAMIC_EXPRESSION =
             Pattern.compile("random\\.uuid|timestamp|random\\(\\d+-\\d+\\)");
@@ -89,14 +89,17 @@ public class YamlParserStrategy implements StressConfigParserStrategy {
                 scenario.body(),
                 scenario.enabled(),
                 scenario.active(),
-                scenario.extractedVariables()
+                scenario.extractedVariables(),
+                scenario.pathTemplate(),
+                scenario.bodyTemplate(),
+                scenario.variableOverrides()
         );
     }
 
     /**
-     * Path parameters are exposed as bindable {@code {token}} placeholders, matching the other parser
-     * strategies, so the Scenario Inspector can substitute them without leaving stray {@code $} prefixes.
-     * Resolver expressions such as {@code ${random.uuid}} keep their {@code ${...}} form.
+     * Colon-style path parameters are exposed as bindable {@code {token}} placeholders. Existing
+     * {@code ${flowVariable}} references retain their syntax so importing and exporting a stress.yaml
+     * does not change its flow-variable semantics.
      */
     static String normalizePath(String path) {
         if (path == null || path.isBlank()) {
@@ -109,10 +112,17 @@ public class YamlParserStrategy implements StressConfigParserStrategy {
         Matcher matcher = PLACEHOLDER.matcher(normalized);
         StringBuilder sb = new StringBuilder();
         while (matcher.find()) {
-            String token = matcher.group(1).trim();
-            String replacement = DYNAMIC_EXPRESSION.matcher(token).matches()
-                    ? "${" + token + "}"
-                    : "{" + token + "}";
+            String dollarPrefix = matcher.group(1);
+            String token = matcher.group(2).trim();
+            String replacement;
+            if (DYNAMIC_EXPRESSION.matcher(token).matches()) {
+                replacement = "${" + token + "}";
+            } else if (!dollarPrefix.isEmpty()) {
+                // Preserve ${flowVariable} references when an existing stress.yaml is re-exported.
+                replacement = "${" + token + "}";
+            } else {
+                replacement = "{" + token + "}";
+            }
             matcher.appendReplacement(sb, Matcher.quoteReplacement(replacement));
         }
         matcher.appendTail(sb);

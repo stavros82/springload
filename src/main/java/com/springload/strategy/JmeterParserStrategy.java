@@ -160,7 +160,10 @@ public class JmeterParserStrategy implements StressConfigParserStrategy {
                 body,
                 true,
                 true,
-                extractedVariables
+                extractedVariables,
+                null,
+                null,
+                null
         );
     }
 

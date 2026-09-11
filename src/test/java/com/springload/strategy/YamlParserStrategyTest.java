@@ -39,13 +39,13 @@ class YamlParserStrategyTest {
 
         StressConfig config = parse(yaml);
 
-        assertEquals("/owners/{ownerId}", config.scenarios().get(0).path());
+        assertEquals("/owners/${ownerId}", config.scenarios().get(0).path());
         assertEquals("/owners/{ownerId}/pets/{petId}", config.scenarios().get(1).path());
     }
 
     @Test
     void collapsesAccumulatedDollarPrefixes() {
-        assertEquals("/owners/{ownerId}", YamlParserStrategy.normalizePath("/owners/$${ownerId}"));
+        assertEquals("/owners/${ownerId}", YamlParserStrategy.normalizePath("/owners/$${ownerId}"));
         assertEquals("/owners/${random(1-100)}", YamlParserStrategy.normalizePath("/owners/$$${random(1-100)}"));
     }
 
@@ -54,7 +54,25 @@ class YamlParserStrategyTest {
         assertEquals("/pets/${random.uuid}", YamlParserStrategy.normalizePath("/pets/${random.uuid}"));
         assertEquals("/pets/${random(1-100)}", YamlParserStrategy.normalizePath("/pets/${random(1-100)}"));
         assertEquals("/events/${timestamp}", YamlParserStrategy.normalizePath("/events/${timestamp}"));
-        assertEquals("/owners/{ownerId}/visits/${timestamp}",
+        assertEquals("/owners/${ownerId}/visits/${timestamp}",
                 YamlParserStrategy.normalizePath("/owners/${ownerId}/visits/${timestamp}"));
+    }
+
+    @Test
+    void preservesExtractedFlowVariablesFromExistingStressYaml() {
+        StressConfig config = parse("""
+                name: Imported
+                scenarios:
+                  - name: Create
+                    method: POST
+                    path: /graphql
+                    body: '{"id":"${categoryId}"}'
+                    extractedVariables:
+                      categoryId: $.data.id
+                """);
+
+        assertEquals("$.data.id",
+                config.scenarios().get(0).extractedVariables().get("categoryId"));
+        assertEquals("{\"id\":\"${categoryId}\"}", config.scenarios().get(0).body());
     }
 }

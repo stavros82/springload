@@ -288,7 +288,7 @@
 
     function compileVariableValue(varState) {
         if (varState.mode === 'reference') return '${' + varState.referenceName + '}';
-        if (varState.mode === 'static') return varState.staticValue || '{' + varState.name + '}';
+        if (varState.mode === 'static') return varState.staticValue || varState.originalValue || '{' + varState.name + '}';
         if (varState.mode === 'uuid') return '${random.uuid}';
         if (varState.mode === 'random') {
             const min = Number.parseInt(varState.min, 10) || 1;
@@ -296,6 +296,18 @@
             return '${random(' + min + '-' + max + ')}';
         }
         return '{' + varState.name + '}';
+    }
+
+    function findOriginalPlaceholder(template, varName) {
+        if (!template) return null;
+        for (const match of template.matchAll(PATH_PLACEHOLDER)) {
+            if (match[1].trim() === varName) return match[0];
+        }
+        return null;
+    }
+
+    function getExtractedVariables(scenario) {
+        return scenario.extractedVariables || scenario.extracted_variables || scenario.flowVariables || {};
     }
 
     function compilePathFromTemplate(pathTemplate, variables) {
@@ -311,19 +323,33 @@
         scenarioUiState.clear();
         const extractedNames = [];
         (config.scenarios || []).forEach(scenario => {
-            Object.keys(scenario.extractedVariables || {}).forEach(name => {
+            Object.keys(getExtractedVariables(scenario)).forEach(name => {
                 if (!extractedNames.includes(name)) extractedNames.push(name);
             });
         });
         (config.scenarios || []).forEach((scenario, index) => {
-            const pathTemplate = scenario.path || '';
-            const bodyTemplate = scenario.body || undefined;
+            const pathTemplate = scenario.pathTemplate || scenario.path || '';
+            const bodyTemplate = scenario.bodyTemplate !== undefined ? scenario.bodyTemplate : (scenario.body || undefined);
+            const overrides = scenario.variableOverrides || {};
             const variables = {};
             const queryVariables = {};
             // Collect variables from both path and body
             const allTemplates = [pathTemplate, bodyTemplate || ''].join(' ');
             extractPathVariables(allTemplates).forEach(varName => {
-                variables[varName] = { name: varName, mode: 'static', staticValue: '', referenceName: '', extractedNames, min: 1, max: 100 };
+                const override = overrides[varName];
+                const isFlowReference = override
+                    ? override === '${' + varName + '}'
+                    : extractedNames.includes(varName);
+                variables[varName] = {
+                    name: varName,
+                    mode: isFlowReference ? 'reference' : 'static',
+                    staticValue: override && !isFlowReference ? override : '',
+                    originalValue: findOriginalPlaceholder(allTemplates, varName),
+                    referenceName: isFlowReference ? varName : '',
+                    extractedNames,
+                    min: 1,
+                    max: 100
+                };
             });
             Object.entries(scenario.queryParams || {}).forEach(([key, value]) => {
                 const text = value == null ? '' : String(value);
@@ -424,7 +450,7 @@
 
         const headersJson = JSON.stringify(scenario.headers || {}, null, 2);
         const bodyText = scenario.body || '';
-        const extractedVariables = scenario.extractedVariables || {};
+        const extractedVariables = getExtractedVariables(scenario);
         const extractionEntries = Object.entries(extractedVariables);
         const stateHtml = extractionEntries.length > 0
             ? `<div class="card-section-label">Available flow values</div>
@@ -598,6 +624,8 @@
     function onBodyChange(index, value) {
         if (!currentConfig || !currentConfig.scenarios[index]) return;
         currentConfig.scenarios[index].body = value;
+        const uiState = scenarioUiState.get(index);
+        if (uiState) uiState.bodyTemplate = value;
         document.getElementById('configOutput').innerText = JSON.stringify(currentConfig, null, 2);
     }
 
@@ -632,6 +660,12 @@
                 if (uiState.bodyTemplate !== undefined) {
                     scenario.body = compileBodyFromTemplate(uiState.bodyTemplate, uiState.variables);
                 }
+                scenario.pathTemplate = uiState.pathTemplate;
+                scenario.bodyTemplate = uiState.bodyTemplate;
+                scenario.variableOverrides = {};
+                Object.entries(uiState.variables).forEach(([name, state]) => {
+                    scenario.variableOverrides[name] = compileVariableValue(state);
+                });
             }
         });
         document.getElementById('configOutput').innerText = JSON.stringify(currentConfig, null, 2);
@@ -669,8 +703,6 @@
         currentConfig.execution.durationSeconds = Number.parseInt(document.getElementById('durationSeconds').value, 10);
         currentConfig.execution.engine = document.getElementById('executionEngine').value;
 
-        syncCompiledPaths();
-
         document.querySelectorAll('.scenario-card').forEach(card => {
             const index = Number.parseInt(card.dataset.index, 10);
             const headersEditor = card.querySelector('.headers-editor');
@@ -686,6 +718,9 @@
                 currentConfig.scenarios[index].body = bodyEditor.value;
             }
         });
+
+        // Capture editor changes before compiling selected flow-variable references.
+        syncCompiledPaths();
     }
 
     function getEngineQueryParam() {

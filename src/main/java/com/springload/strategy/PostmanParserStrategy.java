@@ -144,7 +144,10 @@ public class PostmanParserStrategy implements StressConfigParserStrategy {
                 body,
                 true,
                 true,
-                extractedVariables
+                extractedVariables,
+                null,
+                null,
+                null
         );
     }
 
@@ -466,7 +469,10 @@ public class PostmanParserStrategy implements StressConfigParserStrategy {
                 scenario.body(),
                 scenario.enabled(),
                 scenario.active(),
-                scenario.extractedVariables()
+                scenario.extractedVariables(),
+                scenario.pathTemplate(),
+                scenario.bodyTemplate(),
+                scenario.variableOverrides()
         );
     }
 

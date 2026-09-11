@@ -15,7 +15,10 @@ public record ScenarioConfig(
     String body,
     boolean enabled,
     Boolean active,
-    Map<String, String> extractedVariables
+    Map<String, String> extractedVariables,
+    String pathTemplate,
+    String bodyTemplate,
+    Map<String, String> variableOverrides
 ) {
     public boolean isActive() {
         return active != null ? active : enabled;
