@@ -57,6 +57,11 @@
         .scenario-card.inactive { opacity: 0.55; border-color: #1e293b; }
         .scenario-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
         .scenario-card-title { display: flex; align-items: center; gap: 10px; }
+        .scenario-card-collapse { display: flex; align-items: center; gap: 8px; flex: 1; background: transparent; color: inherit; padding: 0; text-align: left; }
+        .scenario-card-collapse:hover { background: transparent; }
+        .collapse-indicator { color: #38bdf8; font-size: 16px; width: 16px; }
+        .scenario-card.collapsed .scenario-card-header { margin-bottom: 0; }
+        .scenario-card.collapsed .scenario-card-body { display: none; }
         .method-badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; background: #334155; color: #38bdf8; }
         .toggle-switch { position: relative; display: inline-block; width: 44px; height: 24px; }
         .toggle-switch input { opacity: 0; width: 0; height: 0; }
@@ -333,7 +338,7 @@
                     max: 100
                 };
             });
-            scenarioUiState.set(index, { pathTemplate, bodyTemplate, variables, queryVariables });
+            scenarioUiState.set(index, { pathTemplate, bodyTemplate, variables, queryVariables, collapsed: false });
         });
     }
 
@@ -375,6 +380,7 @@
         const isActive = scenario.active !== false;
         const card = document.createElement('div');
         card.className = `scenario-card${isActive ? '' : ' inactive'}`;
+        if (uiState.collapsed) card.classList.add('collapsed');
         card.dataset.index = index;
 
         const pathVars = extractPathVariables([uiState.pathTemplate, uiState.bodyTemplate || ''].join(' '));
@@ -429,32 +435,46 @@
 
         card.innerHTML = `
             <div class="scenario-card-header">
-                <div class="scenario-card-title">
-                    <span class="method-badge">${scenario.method}</span>
-                    <strong>${scenario.name || scenario.path}</strong>
-                </div>
+                <button type="button" class="scenario-card-collapse"
+                        onclick="toggleScenarioCollapsed(${index})"
+                        aria-expanded="${!uiState.collapsed}">
+                    <span class="collapse-indicator">${uiState.collapsed ? '▸' : '▾'}</span>
+                    <span class="scenario-card-title">
+                        <span class="method-badge">${scenario.method}</span>
+                        <strong>${scenario.name || scenario.path}</strong>
+                    </span>
+                </button>
                 <label class="toggle-switch" title="Active">
                     <input type="checkbox" class="scenario-active-toggle" ${isActive ? 'checked' : ''}
                            onchange="toggleScenarioActive(${index}, this.checked)">
                     <span class="toggle-slider"></span>
                 </label>
             </div>
-            <div><code class="compiled-path">${uiState.pathTemplate}</code></div>
-            <div class="weight-row scenario-weight-row" style="${isActive ? '' : 'display:none;'}">
-                <label style="margin:0; min-width:60px;">Weight</label>
-                <input type="range" min="0" max="100" value="${scenario.weight || 0}"
-                       class="weight-slider" oninput="onWeightChange(${index}, this.value)">
-                <span class="weight-val">${scenario.weight || 0}%</span>
+            <div class="scenario-card-body">
+                <div><code class="compiled-path">${uiState.pathTemplate}</code></div>
+                <div class="weight-row scenario-weight-row" style="${isActive ? '' : 'display:none;'}">
+                    <label style="margin:0; min-width:60px;">Weight</label>
+                    <input type="range" min="0" max="100" value="${scenario.weight || 0}"
+                           class="weight-slider" oninput="onWeightChange(${index}, this.value)">
+                    <span class="weight-val">${scenario.weight || 0}%</span>
+                </div>
+                ${stateHtml}
+                ${varOverridesHtml}
+                ${queryOverridesHtml}
+                <div class="card-section-label">HTTP Headers (JSON)</div>
+                <textarea class="headers-editor" oninput="onHeadersChange(${index}, this.value)">${headersJson}</textarea>
+                <div class="card-section-label">Request Body (JSON)</div>
+                <textarea class="body-editor" oninput="onBodyChange(${index}, this.value)">${bodyText}</textarea>
             </div>
-            ${stateHtml}
-            ${varOverridesHtml}
-            ${queryOverridesHtml}
-            <div class="card-section-label">HTTP Headers (JSON)</div>
-            <textarea class="headers-editor" oninput="onHeadersChange(${index}, this.value)">${headersJson}</textarea>
-            <div class="card-section-label">Request Body (JSON)</div>
-            <textarea class="body-editor" oninput="onBodyChange(${index}, this.value)">${bodyText}</textarea>
         `;
         return card;
+    }
+
+    function toggleScenarioCollapsed(index) {
+        const uiState = scenarioUiState.get(index);
+        if (!uiState) return;
+        uiState.collapsed = !uiState.collapsed;
+        refreshScenarioCard(index);
     }
 
     function renderVarValueInput(index, varName, varState, isQuery = false) {
