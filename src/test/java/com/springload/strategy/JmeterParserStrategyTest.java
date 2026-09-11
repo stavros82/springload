@@ -63,6 +63,45 @@ class JmeterParserStrategyTest {
     }
 
     @Test
+    void resolvesUserDefinedVariablesInBaseUrl() {
+        String jmx = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <jmeterTestPlan version="1.2" properties="5.0">
+                  <hashTree>
+                    <TestPlan testname="Catalog">
+                      <elementProp name="TestPlan.user_defined_variables" elementType="Arguments">
+                        <collectionProp name="Arguments.arguments">
+                          <elementProp name="HOST" elementType="Argument">
+                            <stringProp name="Argument.name">HOST</stringProp>
+                            <stringProp name="Argument.value">${__P(host,localhost)}</stringProp>
+                          </elementProp>
+                          <elementProp name="PORT" elementType="Argument">
+                            <stringProp name="Argument.name">PORT</stringProp>
+                            <stringProp name="Argument.value">${__P(port,8080)}</stringProp>
+                          </elementProp>
+                        </collectionProp>
+                      </elementProp>
+                    </TestPlan>
+                    <hashTree>
+                      <HTTPSamplerProxy testname="GraphQL">
+                        <stringProp name="HTTPSampler.domain">${HOST}</stringProp>
+                        <stringProp name="HTTPSampler.port">${PORT}</stringProp>
+                        <stringProp name="HTTPSampler.protocol">http</stringProp>
+                        <stringProp name="HTTPSampler.path">/graphql</stringProp>
+                        <stringProp name="HTTPSampler.method">POST</stringProp>
+                      </HTTPSamplerProxy>
+                    </hashTree>
+                  </hashTree>
+                </jmeterTestPlan>
+                """;
+
+        StressConfig config = parseXml(jmx);
+
+        assertEquals("http://localhost:8080", config.targetBaseUrl());
+        assertEquals("/graphql", config.scenarios().getFirst().path());
+    }
+
+    @Test
     void parsesPetclinicBenchmarkFile() throws Exception {
         StressConfig config = parseResource("petclinic-jmeter-crud-benchmark.jmx");
 

@@ -17,6 +17,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Ingests Apache JMeter test plans (.jmx), traversing HTTPSamplerProxy elements
@@ -26,6 +28,8 @@ import java.util.Map;
 public class JmeterParserStrategy implements StressConfigParserStrategy {
 
     private static final Logger log = LoggerFactory.getLogger(JmeterParserStrategy.class);
+    private static final Pattern VARIABLE = Pattern.compile("\\$\\{([^}]+)}");
+    private static final Pattern PROPERTY = Pattern.compile("\\$\\{__P\\(([^,}]+)(?:,([^}]*))?\\)}");
 
     @Override
     public ParserType getType() {
@@ -51,6 +55,7 @@ public class JmeterParserStrategy implements StressConfigParserStrategy {
             String defaultDomain = extractConfigDefault(doc, "HTTPSampler.domain");
             String defaultPort   = extractConfigDefault(doc, "HTTPSampler.port");
             String defaultProtocol = extractConfigDefault(doc, "HTTPSampler.protocol");
+            Map<String, String> variables = extractUserVariables(doc);
 
             for (int i = 0; i < samplers.getLength(); i++) {
                 Element sampler = (Element) samplers.item(i);
@@ -59,12 +64,12 @@ public class JmeterParserStrategy implements StressConfigParserStrategy {
                 if ("false".equals(enabled)) {
                     continue;
                 }
-                scenarios.add(buildScenario(sampler, doc, defaultDomain, defaultPort, defaultProtocol));
+                scenarios.add(buildScenario(sampler, doc, defaultDomain, defaultPort, defaultProtocol, variables));
             }
 
             log.info("Parsed JMeter plan '{}' with {} scenarios", planName, scenarios.size());
 
-            String baseUrl = deriveBaseUrl(samplers, defaultDomain, defaultPort, defaultProtocol);
+            String baseUrl = deriveBaseUrl(samplers, defaultDomain, defaultPort, defaultProtocol, variables);
             return new StressConfig(
                     planName,
                     baseUrl,
@@ -78,6 +83,49 @@ public class JmeterParserStrategy implements StressConfigParserStrategy {
         }
     }
 
+    private Map<String, String> extractUserVariables(Document doc) {
+            Map<String, String> variables = new LinkedHashMap<>();
+            NodeList props = doc.getElementsByTagName("elementProp");
+            for (int i = 0; i < props.getLength(); i++) {
+                Element arguments = (Element) props.item(i);
+                if (!"TestPlan.user_defined_variables".equals(arguments.getAttribute("name"))) {
+                    continue;
+                }
+                NodeList entries = arguments.getElementsByTagName("elementProp");
+                for (int j = 0; j < entries.getLength(); j++) {
+                    Element entry = (Element) entries.item(j);
+                    String name = stringProp(entry, "Argument.name", "");
+                    String value = stringProp(entry, "Argument.value", "");
+                    if (!name.isBlank()) {
+                        variables.put(name, resolveProperties(value));
+                    }
+                }
+            }
+            return variables;
+        }
+
+    private String resolveProperties(String value) {
+            Matcher property = PROPERTY.matcher(value);
+            StringBuffer result = new StringBuffer();
+            while (property.find()) {
+                String replacement = property.group(2) == null ? "" : property.group(2);
+                property.appendReplacement(result, Matcher.quoteReplacement(replacement));
+            }
+            property.appendTail(result);
+            return result.toString();
+        }
+
+    private String resolveStaticVariables(String value, Map<String, String> variables) {
+            if (value == null || value.isBlank()) return value;
+            Matcher matcher = VARIABLE.matcher(value);
+            StringBuffer result = new StringBuffer();
+            while (matcher.find()) {
+                String replacement = variables.getOrDefault(matcher.group(1), matcher.group());
+                matcher.appendReplacement(result, Matcher.quoteReplacement(replacement));
+            }
+            matcher.appendTail(result);
+            return result.toString();
+        }
     private String extractConfigDefault(Document doc, String propName) {
         NodeList configs = doc.getElementsByTagName("ConfigTestElement");
         for (int i = 0; i < configs.getLength(); i++) {
@@ -88,13 +136,14 @@ public class JmeterParserStrategy implements StressConfigParserStrategy {
     }
 
     private ScenarioConfig buildScenario(Element sampler, Document doc,
-                                         String defaultDomain, String defaultPort, String defaultProtocol) {
+                                         String defaultDomain, String defaultPort, String defaultProtocol,
+                                         Map<String, String> variables) {
         String name     = sampler.getAttribute("testname");
         String method   = stringProp(sampler, "HTTPSampler.method", "GET").toUpperCase();
         String protocol = stringProp(sampler, "HTTPSampler.protocol", defaultProtocol.isBlank() ? "http" : defaultProtocol);
-        String domain   = stringProp(sampler, "HTTPSampler.domain", defaultDomain);
-        String port     = stringProp(sampler, "HTTPSampler.port", defaultPort);
-        String path     = stringProp(sampler, "HTTPSampler.path", "/");
+        String domain   = resolveStaticVariables(stringProp(sampler, "HTTPSampler.domain", defaultDomain), variables);
+        String port     = resolveStaticVariables(stringProp(sampler, "HTTPSampler.port", defaultPort), variables);
+        String path     = resolveStaticVariables(stringProp(sampler, "HTTPSampler.path", "/"), variables);
 
         Map<String, String> queryParams = extractQueryParams(sampler);
         Map<String, String> headers     = extractHeaders(sampler, doc);
@@ -294,24 +343,25 @@ public class JmeterParserStrategy implements StressConfigParserStrategy {
     }
 
     /** Derives the base URL from samplers or falls back to ConfigTestElement defaults. */
-    private String deriveBaseUrl(NodeList samplers, String defaultDomain, String defaultPort, String defaultProtocol) {
+    private String deriveBaseUrl(NodeList samplers, String defaultDomain, String defaultPort,
+                                 String defaultProtocol, Map<String, String> variables) {
         for (int i = 0; i < samplers.getLength(); i++) {
             Element sampler = (Element) samplers.item(i);
             if ("false".equals(sampler.getAttribute("enabled"))) continue;
-            String domain = stringProp(sampler, "HTTPSampler.domain", "");
+            String domain = resolveStaticVariables(stringProp(sampler, "HTTPSampler.domain", ""), variables);
             if (!domain.isBlank()) {
                 return buildBaseUrl(
                         stringProp(sampler, "HTTPSampler.protocol", "http"),
                         domain,
-                        stringProp(sampler, "HTTPSampler.port", "")
+                        resolveStaticVariables(stringProp(sampler, "HTTPSampler.port", ""), variables)
                 );
             }
         }
         if (!defaultDomain.isBlank()) {
             return buildBaseUrl(
                     defaultProtocol.isBlank() ? "http" : defaultProtocol,
-                    defaultDomain,
-                    defaultPort
+                    resolveStaticVariables(defaultDomain, variables),
+                    resolveStaticVariables(defaultPort, variables)
             );
         }
         return "http://localhost:8080";
