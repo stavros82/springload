@@ -55,6 +55,26 @@ public class VirtualThreadsLoadExecutionService implements LoadExecutionService 
                 config.name(), config.targetBaseUrl(), config.execution().concurrency(), config.execution().durationSeconds());
 
         SseEmitter emitter = new SseEmitter(0L);
+        Throwable reachabilityFailure = getTargetReachabilityFailure(config.targetBaseUrl());
+        if (reachabilityFailure != null) {
+            log.warn("Target base URL '{}' is not reachable; aborting load test before dispatching requests.", config.targetBaseUrl(), reachabilityFailure);
+            try {
+                emitter.send(SseEmitter.event()
+                        .name("error")
+                        .data(Map.of(
+                                "status", "TARGET_UNREACHABLE",
+                                "message", "Target base URL is not reachable: " + config.targetBaseUrl(),
+                                "cause", reachabilityFailure.toString(),
+                                "stackTrace", stackTraceToString(reachabilityFailure),
+                                "hint", "Start the target service or fix the imported HAR base URL before running the load test."
+                        )));
+            } catch (IOException ignored) {
+                // Best effort only; still close the emitter below.
+            }
+            emitter.complete();
+            return emitter;
+        }
+
         AtomicLong requestCounter = new AtomicLong();
         AtomicLong errorCounter = new AtomicLong();
         List<Long> latencies = new CopyOnWriteArrayList<>();
@@ -67,6 +87,38 @@ public class VirtualThreadsLoadExecutionService implements LoadExecutionService 
         scheduleMetricsEmitter(emitter, config, startTime, endTime, requestCounter, errorCounter, latencies);
 
         return emitter;
+    }
+
+    private Throwable getTargetReachabilityFailure(String targetBaseUrl) {
+        if (targetBaseUrl == null || targetBaseUrl.isBlank()) {
+            return new IllegalArgumentException("Target base URL is blank.");
+        }
+        try {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(targetBaseUrl))
+                    .timeout(Duration.ofSeconds(3))
+                    .GET()
+                    .build();
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            int status = response.statusCode();
+            if (status >= 200 && status < 500) {
+                return null;
+            }
+            return new IllegalStateException("Target responded with unexpected HTTP status: " + status);
+        } catch (Exception e) {
+            return e;
+        }
+    }
+
+    private String stackTraceToString(Throwable throwable) {
+        StringBuilder sb = new StringBuilder();
+        for (StackTraceElement element : throwable.getStackTrace()) {
+            sb.append(element).append(System.lineSeparator());
+            if (sb.length() > 1200) {
+                break;
+            }
+        }
+        return sb.toString();
     }
 
     private void startVirtualThreadExecutor(StressConfig config, SseEmitter emitter, long endTime,
@@ -133,7 +185,30 @@ public class VirtualThreadsLoadExecutionService implements LoadExecutionService 
                 long currentErrors = errorCounter.incrementAndGet();
                 log.error("EXECUTION ERROR dispatching to {} {}: {} (Total Errors: {})",
                         method, fullUrl, e.getMessage(), currentErrors, e);
+                emitFailureEvent(emitter, method, fullUrl, e);
             }
+    }
+
+    private void emitFailureEvent(SseEmitter emitter, String method, String fullUrl, Throwable throwable) {
+        try {
+            emitter.send(SseEmitter.event()
+                    .name("error")
+                    .data(Map.of(
+                            "status", "REQUEST_FAILED",
+                            "method", method,
+                            "url", fullUrl,
+                            "message", throwable.getMessage(),
+                            "error", throwable.toString(),
+                            "stackTrace", java.util.Arrays.stream(throwable.getStackTrace())
+                                    .map(StackTraceElement::toString)
+                                    .limit(8)
+                                    .collect(java.util.stream.Collectors.joining("\n")),
+                            "type", throwable.getClass().getSimpleName(),
+                            "hint", "Check the target URL, HAR base URL, headers, and server availability."
+                    )));
+        } catch (IOException ignored) {
+            // Client disconnected; best-effort only.
+        }
     }
 
     private HttpRequest buildHttpRequest(Map<String, String> headers, String body, String fullUrl, String method) {

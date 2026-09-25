@@ -48,6 +48,27 @@ public class ReactiveLoadExecutionService implements LoadExecutionService {
                 config.name(), config.targetBaseUrl());
 
         SseEmitter emitter = new SseEmitter(0L);
+        Throwable reachabilityFailure = getTargetReachabilityFailure(config.targetBaseUrl());
+        if (reachabilityFailure != null) {
+            log.warn("[Reactive Engine] Target base URL '{}' is not reachable; aborting load test before dispatching requests.",
+                    config.targetBaseUrl(), reachabilityFailure);
+            try {
+                emitter.send(SseEmitter.event()
+                        .name("error")
+                        .data(Map.of(
+                                "status", "TARGET_UNREACHABLE",
+                                "message", "Target base URL is not reachable: " + config.targetBaseUrl(),
+                                "cause", reachabilityFailure.toString(),
+                                "stackTrace", stackTraceToString(reachabilityFailure),
+                                "hint", "Start the target service or fix the imported HAR base URL before running the load test."
+                        )));
+            } catch (Exception ignored) {
+                // Best effort only; the emitter is closed below.
+            }
+            emitter.complete();
+            return emitter;
+        }
+
         AtomicLong requestCounter = new AtomicLong();
         AtomicLong errorCounter = new AtomicLong();
         List<Long> latencies = new CopyOnWriteArrayList<>();
@@ -59,6 +80,40 @@ public class ReactiveLoadExecutionService implements LoadExecutionService {
         scheduleRealTimeMetrics(emitter, requestCounter, errorCounter, latencies, durationSec);
 
         return emitter;
+    }
+
+    private Throwable getTargetReachabilityFailure(String targetBaseUrl) {
+        if (targetBaseUrl == null || targetBaseUrl.isBlank()) {
+            return new IllegalArgumentException("Target base URL is blank.");
+        }
+        try {
+            WebClient client = WebClient.builder().build();
+            var response = client.get()
+                    .uri(targetBaseUrl)
+                    .exchangeToMono(resp -> Mono.just(resp.statusCode()))
+                    .block(Duration.ofSeconds(3));
+            if (response != null && (
+                    response.is2xxSuccessful()
+                            || response.is3xxRedirection()
+                            || response.is4xxClientError()
+            )) {
+                return null;
+            }
+            return new IllegalStateException("Target responded with unexpected HTTP status: " + (response == null ? "<null>" : response.value()));
+        } catch (Exception e) {
+            return e;
+        }
+    }
+
+    private String stackTraceToString(Throwable throwable) {
+        StringBuilder sb = new StringBuilder();
+        for (StackTraceElement element : throwable.getStackTrace()) {
+            sb.append(element).append(System.lineSeparator());
+            if (sb.length() > 1200) {
+                break;
+            }
+        }
+        return sb.toString();
     }
 
     private void startReactiveExecutionPipeline(StressConfig config,
@@ -140,9 +195,32 @@ public class ReactiveLoadExecutionService implements LoadExecutionService {
                             .then())
                     .onErrorResume(e -> {
                         errorCounter.incrementAndGet();
+                        emitFailureEvent(emitter, scenario.method(), resolvedUri, e);
                         return Mono.empty();
                     });
         });
+    }
+
+    private void emitFailureEvent(SseEmitter emitter, String method, String fullUrl, Throwable throwable) {
+        try {
+            emitter.send(SseEmitter.event()
+                    .name("error")
+                    .data(Map.of(
+                            "status", "REQUEST_FAILED",
+                            "method", method,
+                            "url", fullUrl,
+                            "message", throwable.getMessage(),
+                            "error", throwable.toString(),
+                            "stackTrace", java.util.Arrays.stream(throwable.getStackTrace())
+                                    .map(StackTraceElement::toString)
+                                    .limit(8)
+                                    .collect(java.util.stream.Collectors.joining("\n")),
+                            "type", throwable.getClass().getSimpleName(),
+                            "hint", "Check the target URL, HAR base URL, headers, and server availability."
+                    )));
+        } catch (Exception ignored) {
+            // Best effort only; client may have disconnected.
+        }
     }
 
     private void applyAllowedHeaders(Map<String, String> headers, WebClient.RequestHeadersSpec<?> requestSpec) {

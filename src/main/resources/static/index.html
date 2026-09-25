@@ -779,16 +779,26 @@
     }
 
     async function processSseLine(line, statusBadge, viewReportBtn, reportContainer) {
-        if (!line.includes('event:metric') && !line.includes('event:complete') && !line.includes('event:warning') && !line.startsWith('data:')) {
+        const eventName = line.match(/event:(.*)/)?.[1]?.trim() || '';
+        if (!eventName && !line.startsWith('data:')) {
             return;
         }
         const dataMatch = line.match(/data:(.*)/);
         if (!dataMatch) return;
         try {
             const payload = JSON.parse(dataMatch[1].trim());
-            if (line.includes('event:warning') && payload.skippedScenario) {
+            if (eventName === 'warning' && payload.skippedScenario) {
                 const metricsLog = document.getElementById('metricsLog');
                 metricsLog.innerText += `\n⚠️ SKIPPED: "${payload.skippedScenario}" — ${payload.reason}`;
+                return;
+            }
+            if (eventName === 'error') {
+                const metricsLog = document.getElementById('metricsLog');
+                const errorText = payload.cause || payload.message || payload.error || JSON.stringify(payload);
+                const stackText = payload.stackTrace ? `\n${payload.stackTrace}` : '';
+                metricsLog.innerText += `\n[ERROR] ${payload.status || 'REQUEST_FAILED'}: ${errorText}${stackText}`;
+                statusBadge.innerText = 'Failed';
+                statusBadge.className = 'status-badge';
                 return;
             }
             updateLiveChartFromMetric(payload);
