@@ -26,12 +26,15 @@ public class ParserController {
 
     // Upload & Parse (POST /api/v1/parse)
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<StressConfig> parseFile(
+    public ResponseEntity<?> parseFile(
             @RequestParam("file") MultipartFile file,
             @RequestParam("type") ParserType type) throws IOException {
-        
-        StressConfig config = parserFactory.getStrategy(type).parse(file.getInputStream());
-        return ResponseEntity.ok(config);
+        try {
+            StressConfig config = parserFactory.getStrategy(type).parse(file.getInputStream());
+            return ResponseEntity.ok(config);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(java.util.Map.of("error", e.getMessage()));
+        }
     }
 
     // Export generated stress.yaml

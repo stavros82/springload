@@ -70,6 +70,59 @@ class HarParserStrategyTest {
     }
 
     @Test
+    void replacesNormalizedPathPlaceholdersWhenRequestBodyContainsTheCorrelatedId() {
+        String json = "{"
+                + "\"log\":{"
+                + "\"version\":\"1.2\","
+                + "\"entries\":["
+                + "{\"request\":{\"method\":\"GET\",\"url\":\"https://api.example.com/polls/123456\",\"headers\":[{\"name\":\"Accept\",\"value\":\"application/json\"}]},"
+                + "\"response\":{\"status\":200,\"content\":{\"text\":\"{\\\"id\\\":123456,\\\"question\\\":\\\"Which is better?\\\"}\"},\"headers\":[]}},"
+                + "{\"request\":{\"method\":\"POST\",\"url\":\"https://api.example.com/polls/123456/votes\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"application/json\"}],\"postData\":{\"text\":\"{\\\"pollId\\\":123456,\\\"choice\\\":\\\"A\\\"}\"}},"
+                + "\"response\":{\"status\":200,\"content\":{\"text\":\"{\\\"ok\\\":true}\"},\"headers\":[]}}"
+                + "]"
+                + "}"
+                + "}";
+
+        StressConfig config = parse(json);
+
+        assertTrue(config.scenarios().get(1).path().contains("${"));
+        assertTrue(config.scenarios().get(1).path().contains("pollId") || config.scenarios().get(1).path().contains("id"));
+        assertTrue(!config.scenarios().get(1).path().contains("{id}"));
+    }
+
+    @Test
+    void parsesPollHarWithoutRetainingOversizedBodies() throws Exception {
+        try (var input = getClass().getResourceAsStream("/poll.har")) {
+            StressConfig config = strategy.parse(input);
+            assertEquals("http://127.0.0.1:8080", config.targetBaseUrl());
+            assertTrue(config.scenarios().size() >= 10);
+            assertTrue(config.scenarios().stream().anyMatch(scenario ->
+                    scenario.path().contains("/auth/signin")
+                            || scenario.name().contains("/auth/signin")));
+        }
+    }
+
+    @Test
+    void skipsOversizedCorrelationValuesToAvoidHeapPressure() {
+        String largeValue = "X".repeat(2000);
+        String json = "{"
+                + "\"log\":{"
+                + "\"version\":\"1.2\","
+                + "\"entries\":["
+                + "{\"request\":{\"method\":\"GET\",\"url\":\"https://api.example.com/polls/42\",\"headers\":[{\"name\":\"Accept\",\"value\":\"application/json\"}]},"
+                + "\"response\":{\"status\":200,\"content\":{\"text\":\"{\\\"id\\\":42,\\\"payload\\\":\\\"" + largeValue + "\\\"}\"},\"headers\":[]}},"
+                + "{\"request\":{\"method\":\"POST\",\"url\":\"https://api.example.com/polls/42/votes\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"application/json\"}],\"postData\":{\"text\":\"{\\\"pollId\\\":42,\\\"choice\\\":\\\"A\\\"}\"}},"
+                + "\"response\":{\"status\":200,\"content\":{\"text\":\"{\\\"ok\\\":true}\"},\"headers\":[]}}"
+                + "]"
+                + "}"
+                + "}";
+
+        StressConfig config = parse(json);
+
+        assertEquals("/polls/{id}/votes", config.scenarios().get(1).path());
+    }
+
+    @Test
     void stripsBrowserReferrerHeadersFromHarRequests() {
         String json = """
                 {

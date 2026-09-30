@@ -166,8 +166,9 @@ public class VirtualThreadsLoadExecutionService implements LoadExecutionService 
 
             try {
                 if (DynamicVariableResolver.hasUnresolvedVariables(resolvedPath)) {
-                    throw new IllegalArgumentException("Unresolved flow variable in path '" + scenario.path()
-                            + "'. Ensure the extracting scenario is enabled and runs before this request.");
+                    log.warn("Skipping '{}' because path '{}' still contains unresolved flow variables. Ensure the extracting scenario is enabled and runs before this request.",
+                            method, scenario.path());
+                    return;
                 }
                 HttpRequest request = buildHttpRequest(resolvedHeaders, resolvedBody, fullUrl, method);
                 long reqStart = System.currentTimeMillis();

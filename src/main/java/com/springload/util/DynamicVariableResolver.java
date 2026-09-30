@@ -23,6 +23,7 @@ import java.util.regex.Pattern;
 public final class DynamicVariableResolver {
 
     private static final String PLACEHOLDER_PREFIX = "${";
+    private static final int MAX_RESOLUTION_DEPTH = 12;
     private static final Pattern RANDOM_RANGE = Pattern.compile("\\$\\{random\\((\\d+)-(\\d+)\\)}");
     private static final Pattern RANDOM_UUID = Pattern.compile("\\$\\{random\\.uuid}");
     private static final Pattern TIMESTAMP = Pattern.compile("\\$\\{timestamp}");
@@ -39,13 +40,13 @@ public final class DynamicVariableResolver {
      * Such scenarios depend on prior response extraction and must be skipped in stateless mode.
      */
     public static boolean hasCorrelatedVariables(String template) {
-        if (template == null || !template.contains(PLACEHOLDER_PREFIX)) {
+        if (template == null || (template.indexOf(PLACEHOLDER_PREFIX) < 0 && template.indexOf('{') < 0)) {
             return false;
         }
         String stripped = RANDOM_RANGE.matcher(template).replaceAll("");
         stripped = RANDOM_UUID.matcher(stripped).replaceAll("");
         stripped = TIMESTAMP.matcher(stripped).replaceAll("");
-        return UNRESOLVED.matcher(stripped).find();
+        return UNRESOLVED.matcher(stripped).find() || PATH_VARIABLE.matcher(stripped).find();
     }
 
     public static String resolve(String template) {
@@ -57,36 +58,168 @@ public final class DynamicVariableResolver {
             return template;
         }
 
-        String result = replaceRandomRanges(template, matcher -> {
-            int min = Integer.parseInt(matcher.group(1));
-            int max = Integer.parseInt(matcher.group(2));
-            if (min > max) {
-                int tmp = min;
-                min = max;
-                max = tmp;
-            }
-            return String.valueOf(ThreadLocalRandom.current().nextInt(min, max + 1));
-        });
+        String current = template;
+        for (int depth = 0; depth < MAX_RESOLUTION_DEPTH; depth++) {
+            String previous = current;
+            current = replaceRandomRanges(current, matcher -> {
+                int min = Integer.parseInt(matcher.group(1));
+                int max = Integer.parseInt(matcher.group(2));
+                if (min > max) {
+                    int tmp = min;
+                    min = max;
+                    max = tmp;
+                }
+                return String.valueOf(ThreadLocalRandom.current().nextInt(min, max + 1));
+            });
 
-        result = RANDOM_UUID.matcher(result).replaceAll(match -> UUID.randomUUID().toString());
-        result = TIMESTAMP.matcher(result).replaceAll(match -> String.valueOf(System.currentTimeMillis()));
-        Matcher variableMatcher = VARIABLE.matcher(result);
-        StringBuffer resolved = new StringBuffer();
-        while (variableMatcher.find()) {
-            String value = variables.get(variableMatcher.group(1));
-            variableMatcher.appendReplacement(resolved,
-                    value == null ? Matcher.quoteReplacement(variableMatcher.group()) : Matcher.quoteReplacement(value));
+            current = RANDOM_UUID.matcher(current).replaceAll(match -> UUID.randomUUID().toString());
+            current = TIMESTAMP.matcher(current).replaceAll(match -> String.valueOf(System.currentTimeMillis()));
+            current = replaceVariables(current, variables);
+            current = replacePathVariables(current, variables);
+
+            if (current.equals(previous)) {
+                break;
+            }
         }
-        variableMatcher.appendTail(resolved);
-        Matcher pathVariableMatcher = PATH_VARIABLE.matcher(resolved);
-        StringBuffer pathResolved = new StringBuffer();
-        while (pathVariableMatcher.find()) {
-            String value = variables.get(pathVariableMatcher.group(1));
-            pathVariableMatcher.appendReplacement(pathResolved,
-                    value == null ? Matcher.quoteReplacement(pathVariableMatcher.group()) : Matcher.quoteReplacement(value));
+        return current;
+    }
+
+    private static String replaceVariables(String input, Map<String, String> variables) {
+        if (input == null || input.isEmpty() || variables == null || variables.isEmpty()) {
+            return input;
         }
-        pathVariableMatcher.appendTail(pathResolved);
-        return pathResolved.toString();
+
+        StringBuilder resolved = new StringBuilder();
+        int cursor = 0;
+        while (cursor < input.length()) {
+            int dollarIndex = input.indexOf("${", cursor);
+            int braceIndex = input.indexOf("{", cursor);
+            int nextIndex = nextPlaceholderStart(dollarIndex, braceIndex);
+            if (nextIndex < 0) {
+                resolved.append(input.substring(cursor));
+                break;
+            }
+            resolved.append(input, cursor, nextIndex);
+
+            boolean isDollarPlaceholder = dollarIndex == nextIndex;
+            int closingIndex = findClosingBrace(input, nextIndex + (isDollarPlaceholder ? 2 : 1));
+            if (closingIndex < 0) {
+                resolved.append(input.substring(nextIndex));
+                break;
+            }
+
+            String placeholderBody = input.substring(nextIndex + (isDollarPlaceholder ? 2 : 1), closingIndex);
+            String replacement = resolvePlaceholderValue(placeholderBody, variables);
+            if (replacement == null) {
+                resolved.append(input, nextIndex, closingIndex + 1);
+            } else {
+                resolved.append(replacement);
+            }
+            cursor = closingIndex + 1;
+        }
+        return resolved.toString();
+    }
+
+    private static String replacePathVariables(String input, Map<String, String> variables) {
+        if (input == null || input.isEmpty() || variables == null || variables.isEmpty()) {
+            return input;
+        }
+        StringBuilder resolved = new StringBuilder();
+        int cursor = 0;
+        while (cursor < input.length()) {
+            int openIndex = input.indexOf('{', cursor);
+            if (openIndex < 0) {
+                resolved.append(input.substring(cursor));
+                break;
+            }
+            if (openIndex > 0 && input.charAt(openIndex - 1) == '$') {
+                resolved.append(input, cursor, openIndex + 1);
+                cursor = openIndex + 1;
+                continue;
+            }
+            int closingIndex = findClosingBrace(input, openIndex + 1);
+            if (closingIndex < 0) {
+                resolved.append(input.substring(cursor));
+                break;
+            }
+            String name = input.substring(openIndex + 1, closingIndex);
+            String replacement = variables.getOrDefault(name, null);
+            if (replacement == null) {
+                resolved.append(input, cursor, closingIndex + 1);
+            } else {
+                resolved.append(input, cursor, openIndex).append(replacement);
+            }
+            cursor = closingIndex + 1;
+        }
+        return resolved.toString();
+    }
+
+    private static String resolvePlaceholderValue(String placeholderBody, Map<String, String> variables) {
+        if (placeholderBody == null) {
+            return null;
+        }
+        String trimmed = placeholderBody.trim();
+        if (trimmed.isEmpty()) {
+            return null;
+        }
+
+        String indirectName = unwrapReferenceName(trimmed);
+        if (indirectName != null && variables.containsKey(indirectName)) {
+            return variables.get(indirectName);
+        }
+
+        if (variables.containsKey(trimmed)) {
+            return variables.get(trimmed);
+        }
+
+        return null;
+    }
+
+    private static String unwrapReferenceName(String value) {
+        String trimmed = value == null ? null : value.trim();
+        if (trimmed == null || trimmed.isEmpty()) {
+            return null;
+        }
+        while ((trimmed.startsWith("${") && trimmed.endsWith("}")) || (trimmed.startsWith("{") && trimmed.endsWith("}"))) {
+            String inner = trimmed.substring(trimmed.startsWith("${") ? 2 : 1, trimmed.length() - 1).trim();
+            if (inner.isEmpty()) {
+                return null;
+            }
+            trimmed = inner;
+        }
+        return trimmed;
+    }
+
+    private static int nextPlaceholderStart(int dollarIndex, int braceIndex) {
+        if (dollarIndex < 0 && braceIndex < 0) {
+            return -1;
+        }
+        if (dollarIndex < 0) {
+            return braceIndex;
+        }
+        if (braceIndex < 0) {
+            return dollarIndex;
+        }
+        return Math.min(dollarIndex, braceIndex);
+    }
+
+    private static int findClosingBrace(String input, int startIndex) {
+        if (input == null || startIndex < 0 || startIndex >= input.length()) {
+            return -1;
+        }
+        int depth = 1;
+        for (int i = startIndex; i < input.length(); i++) {
+            char current = input.charAt(i);
+            if (current == '{') {
+                depth++;
+            } else if (current == '}') {
+                depth--;
+                if (depth == 0) {
+                    return i;
+                }
+            }
+        }
+        return -1;
     }
 
     public static boolean hasUnresolvedVariables(String template) {

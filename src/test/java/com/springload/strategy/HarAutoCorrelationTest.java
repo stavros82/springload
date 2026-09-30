@@ -68,6 +68,43 @@ class HarAutoCorrelationTest {
     }
 
     @Test
+    void doesNotMaterializeThousandsOfLowUniquenessTokensFromLargeJsonResponses() {
+        String uuid = "550e8400-e29b-41d4-a716-446655440000";
+        StringBuilder payload = new StringBuilder(64 * 1024);
+        payload.append("{\"sessionId\":\"").append(uuid).append("\",\"items\":[");
+        for (int i = 0; i < 4000; i++) {
+            if (i > 0) {
+                payload.append(',');
+            }
+            payload.append("{\"label\":\"item").append(i).append("abcdef\"}");
+        }
+        payload.append("]}");
+
+        List<HarCorrelationScanner.HarEntry> entries = List.of(
+                new HarCorrelationScanner.HarEntry(
+                        "https://app.example.com/catalog",
+                        Map.of(),
+                        Map.of(),
+                        null,
+                        payload.toString(),
+                        Map.of()),
+                new HarCorrelationScanner.HarEntry(
+                        "https://app.example.com/api/orders?session=" + uuid,
+                        Map.of("session", uuid),
+                        Map.of(),
+                        "{\"orderId\":42}",
+                        "{\"success\":true}",
+                        Map.of())
+        );
+
+        List<HarCorrelationScanner.CorrelationMatch> results = HarCorrelationScanner.scan(entries);
+        assertTrue(results.size() <= 256);
+        assertTrue(results.stream().anyMatch(match -> match.value().equals(uuid)));
+        assertTrue(results.stream().noneMatch(match -> match.value() != null && match.value().startsWith("item")));
+    }
+
+
+    @Test
     void buildsJsonPathAndHeaderSelectorsAndProofsExtraction() {
         String responseBody = "{\"data\":{\"session\":{\"token\":\"abc123.jwt.token\"}},\"headers\":{\"X-Auth-Token\":\"abc123.jwt.token\"}}";
         String token = "abc123.jwt.token";

@@ -17,16 +17,25 @@ public final class UniquenessScorer {
         LOW
     }
 
+    private static final int MAX_SCORED_LENGTH = 2048;
+    private static final int MAX_ENTROPY_LENGTH = 512;
+
     public static UniquenessLevel score(String candidate) {
         if (candidate == null || candidate.isBlank()) {
             return UniquenessLevel.LOW;
         }
         String value = candidate.trim();
+        if (value.length() > MAX_SCORED_LENGTH) {
+            return UniquenessLevel.LOW;
+        }
         if (UUID_PATTERN.matcher(value).matches()) {
             return UniquenessLevel.HIGH;
         }
         if (value.startsWith("eyJ") && JWT_PATTERN.matcher(value).matches()) {
             return UniquenessLevel.HIGH;
+        }
+        if (value.length() > MAX_ENTROPY_LENGTH) {
+            return UniquenessLevel.LOW;
         }
         double entropy = calculateShannonEntropy(value);
         if (value.length() > 16 && entropy >= 3.2) {

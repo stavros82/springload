@@ -1,5 +1,7 @@
 package com.springload.strategy;
 
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.springload.dto.ExecutionSettings;
@@ -8,17 +10,19 @@ import com.springload.dto.StressConfig;
 import com.springload.dto.Thresholds;
 import com.springload.util.correlation.ExtractorPathBuilder;
 import com.springload.util.correlation.HarCorrelationScanner;
-import com.springload.util.correlation.UniquenessScorer;
 import org.springframework.stereotype.Component;
 
 import java.io.InputStream;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Component
 public class HarParserStrategy implements StressConfigParserStrategy {
@@ -46,75 +50,40 @@ public class HarParserStrategy implements StressConfigParserStrategy {
     @Override
     public StressConfig parse(InputStream inputStream) {
         try {
-            JsonNode root = OBJECT_MAPPER.readTree(inputStream);
-            JsonNode log = root.path("log");
-            if (log.isMissingNode()) {
-                throw new IllegalArgumentException("Invalid HAR file: missing 'log' object.");
-            }
-
-            JsonNode entries = log.path("entries");
-            if (!entries.isArray()) {
-                throw new IllegalArgumentException("Invalid HAR file: missing 'log.entries' array.");
-            }
-
             List<HarCorrelationScanner.HarEntry> harEntries = new ArrayList<>();
             List<ScenarioConfig> scenarios = new ArrayList<>();
             String baseUrl = null;
             String harName = "Imported HAR";
+            boolean sawEntriesArray = false;
 
-            for (JsonNode entry : entries) {
-                if (entry == null || entry.isNull()) {
-                    continue;
+            try (JsonParser parser = OBJECT_MAPPER.getFactory().createParser(inputStream)) {
+                JsonToken token;
+                while ((token = parser.nextToken()) != null) {
+                    if (token != JsonToken.FIELD_NAME || !"entries".equals(parser.currentName())) {
+                        continue;
+                    }
+                    if (parser.nextToken() != JsonToken.START_ARRAY) {
+                        throw new IllegalArgumentException("Invalid HAR file: missing 'log.entries' array.");
+                    }
+                    sawEntriesArray = true;
+                    while (parser.nextToken() != JsonToken.END_ARRAY) {
+                        JsonNode entry = OBJECT_MAPPER.readTree(parser);
+                        ParsedHarRow row = readRow(entry);
+                        if (row == null) {
+                            continue;
+                        }
+                        if (baseUrl == null) {
+                            baseUrl = extractBaseUrl(row.requestUrl());
+                        }
+                        harEntries.add(row.harEntry());
+                        scenarios.add(row.scenario());
+                    }
+                    break;
                 }
-                JsonNode requestNode = entry.path("request");
-                if (requestNode.isMissingNode()) {
-                    continue;
-                }
+            }
 
-                String requestUrl = requestNode.path("url").asText(null);
-                if (requestUrl == null || requestUrl.isBlank()) {
-                    continue;
-                }
-                if (HarCorrelationScanner.isStaticAssetPath(requestUrl)) {
-                    continue;
-                }
-
-                String method = requestNode.path("method").asText("GET").toUpperCase(Locale.ROOT);
-                String path = normalizePath(requestUrl);
-                if (baseUrl == null) {
-                    baseUrl = extractBaseUrl(requestUrl);
-                }
-
-                Map<String, String> headers = extractHeaders(requestNode.path("headers"));
-                Map<String, String> queryParams = extractQueryParams(requestNode.path("queryString"));
-                String body = extractBody(requestNode.path("postData"));
-                String name = method + " " + path;
-
-                HarCorrelationScanner.HarEntry harEntry = new HarCorrelationScanner.HarEntry(
-                        requestUrl,
-                        queryParams,
-                        headers,
-                        body,
-                        extractResponseBody(entry.path("response")),
-                        extractResponseHeaders(entry.path("response"))
-                );
-                harEntries.add(harEntry);
-
-                scenarios.add(new ScenarioConfig(
-                        name,
-                        method,
-                        path,
-                        1,
-                        headers,
-                        queryParams,
-                        body,
-                        true,
-                        true,
-                        Map.of(),
-                        null,
-                        null,
-                        null
-                ));
+            if (!sawEntriesArray) {
+                throw new IllegalArgumentException("Invalid HAR file: missing 'log.entries' array.");
             }
 
             if (scenarios.isEmpty()) {
@@ -134,9 +103,67 @@ public class HarParserStrategy implements StressConfigParserStrategy {
                     scenarios,
                     new Thresholds(200, 500, 1.0)
             );
+        } catch (RuntimeException e) {
+            throw e;
         } catch (Exception e) {
             throw new RuntimeException("Failed to parse HAR file: " + e.getMessage(), e);
         }
+    }
+
+    private ParsedHarRow readRow(JsonNode entry) {
+        if (entry == null || entry.isNull()) {
+            return null;
+        }
+        JsonNode requestNode = entry.path("request");
+        if (requestNode.isMissingNode()) {
+            return null;
+        }
+
+        String requestUrl = requestNode.path("url").asText(null);
+        if (requestUrl == null || requestUrl.isBlank()) {
+            return null;
+        }
+        if (HarCorrelationScanner.isStaticAssetPath(requestUrl)) {
+            return null;
+        }
+
+        String method = requestNode.path("method").asText("GET").toUpperCase(Locale.ROOT);
+        String path = normalizePath(requestUrl);
+        Map<String, String> headers = extractHeaders(requestNode.path("headers"));
+        Map<String, String> queryParams = extractQueryParams(requestNode.path("queryString"));
+        String body = extractBody(requestNode.path("postData"));
+        String name = method + " " + path;
+
+        HarCorrelationScanner.HarEntry harEntry = new HarCorrelationScanner.HarEntry(
+                requestUrl,
+                queryParams,
+                headers,
+                body,
+                extractResponseBody(entry.path("response")),
+                extractResponseHeaders(entry.path("response"))
+        );
+        ScenarioConfig scenario = new ScenarioConfig(
+                name,
+                method,
+                path,
+                1,
+                headers,
+                queryParams,
+                body,
+                true,
+                true,
+                Map.of(),
+                null,
+                null,
+                null
+        );
+        return new ParsedHarRow(requestUrl, harEntry, scenario);
+    }
+
+    private record ParsedHarRow(
+            String requestUrl,
+            HarCorrelationScanner.HarEntry harEntry,
+            ScenarioConfig scenario) {
     }
 
     private List<ScenarioConfig> applyCorrelationRules(List<ScenarioConfig> scenarios, List<HarCorrelationScanner.HarEntry> harEntries) {
@@ -144,22 +171,12 @@ public class HarParserStrategy implements StressConfigParserStrategy {
             return scenarios;
         }
 
-        Map<String, Integer> scenarioIndexByUrl = new LinkedHashMap<>();
-        for (int i = 0; i < scenarios.size(); i++) {
-            String requestUrl = harEntries.get(i).requestUrl();
-            if (requestUrl != null && !requestUrl.isBlank()) {
-                scenarioIndexByUrl.put(requestUrl, i);
-            }
-        }
-
         List<HarCorrelationScanner.CorrelationMatch> matches = HarCorrelationScanner.scan(harEntries);
         List<ScenarioConfig> resolved = new ArrayList<>(scenarios);
 
         for (HarCorrelationScanner.CorrelationMatch match : matches) {
-            String sourceUrl = findSourceUrlForValue(harEntries, match.value());
-            Integer upstreamIndex = sourceUrl == null ? null : scenarioIndexByUrl.get(sourceUrl);
-            Integer downstreamIndex = scenarioIndexByUrl.get(match.requestUrl());
-
+            Integer upstreamIndex = resolveMatchIndex(match.sourceIndex(), harEntries.size());
+            Integer downstreamIndex = resolveMatchIndex(match.downstreamIndex(), harEntries.size());
             if (upstreamIndex == null || downstreamIndex == null) {
                 continue;
             }
@@ -168,7 +185,7 @@ public class HarParserStrategy implements StressConfigParserStrategy {
             ScenarioConfig downstream = resolved.get(downstreamIndex);
             String variableName = inferVariableName(match.parameterName(), match.parameterValue(), match.value());
 
-            String selector = buildExtractionSelector(harEntries, sourceUrl, match.value());
+            String selector = buildExtractionSelector(harEntries.get(upstreamIndex), match.value());
             Map<String, String> upstreamExtracts = new LinkedHashMap<>(upstream.extractedVariables() == null ? Map.of() : upstream.extractedVariables());
             if (selector != null && !selector.isBlank()) {
                 upstreamExtracts.put(variableName, selector);
@@ -181,39 +198,28 @@ public class HarParserStrategy implements StressConfigParserStrategy {
         return resolved;
     }
 
-    private String findSourceUrlForValue(List<HarCorrelationScanner.HarEntry> harEntries, String value) {
-        if (value == null || value.isBlank()) {
+    private Integer resolveMatchIndex(int index, int size) {
+        if (index < 0 || index >= size) {
             return null;
         }
-        for (HarCorrelationScanner.HarEntry entry : harEntries) {
-            if (entry == null || entry.responseBody() == null || entry.responseBody().isBlank()) {
-                continue;
-            }
-            if (entry.responseBody().contains(value)) {
-                return entry.requestUrl();
-            }
-        }
-        return null;
+        return index;
     }
 
-    private String buildExtractionSelector(List<HarCorrelationScanner.HarEntry> harEntries, String sourceUrl, String value) {
-        if (sourceUrl == null) {
+    private String buildExtractionSelector(HarCorrelationScanner.HarEntry entry, String value) {
+        if (entry == null) {
             return ExtractorPathBuilder.buildRegexFallback(value);
         }
-        for (HarCorrelationScanner.HarEntry entry : harEntries) {
-            if (entry != null && sourceUrl.equals(entry.requestUrl())) {
-                String jsonPath = ExtractorPathBuilder.buildJsonPath(entry.responseBody(), value);
-                if (jsonPath != null && !jsonPath.isBlank()) {
-                    return jsonPath;
-                }
-                for (Map.Entry<String, List<String>> responseHeader : entry.responseHeaders().entrySet()) {
-                    for (String headerValue : responseHeader.getValue()) {
-                        if (value.equals(headerValue)) {
-                            return "header:" + responseHeader.getKey();
-                        }
+        String jsonPath = ExtractorPathBuilder.buildJsonPath(entry.responseBody(), value);
+        if (jsonPath != null && !jsonPath.isBlank()) {
+            return jsonPath;
+        }
+        if (entry.responseHeaders() != null) {
+            for (Map.Entry<String, List<String>> responseHeader : entry.responseHeaders().entrySet()) {
+                for (String headerValue : responseHeader.getValue()) {
+                    if (value.equals(headerValue)) {
+                        return "header:" + responseHeader.getKey();
                     }
                 }
-                return ExtractorPathBuilder.buildRegexFallback(value);
             }
         }
         return ExtractorPathBuilder.buildRegexFallback(value);
@@ -274,11 +280,16 @@ public class HarParserStrategy implements StressConfigParserStrategy {
             }
         }
 
-        if (body != null && body.contains(matchedValue)) {
-            body = body.replace(matchedValue, "${" + variableName + "}");
-        }
-        if (path != null && path.contains(matchedValue)) {
-            path = path.replace(matchedValue, "${" + variableName + "}");
+        if (canSafelyReplace(matchedValue)) {
+            if (body != null && body.contains(matchedValue)) {
+                body = body.replace(matchedValue, "${" + variableName + "}");
+            }
+            if (path != null) {
+                String updatedPath = replacePathPlaceholder(path, parameterName, variableName, matchedValue);
+                if (updatedPath != null) {
+                    path = updatedPath;
+                }
+            }
         }
 
         return new ScenarioConfig(
@@ -298,12 +309,68 @@ public class HarParserStrategy implements StressConfigParserStrategy {
         );
     }
 
+    private String replacePathPlaceholder(String path, String parameterName, String variableName, String matchedValue) {
+        if (path == null || path.isBlank()) {
+            return path;
+        }
+        if (matchedValue != null && !matchedValue.isBlank() && path.contains(matchedValue)) {
+            return path.replace(matchedValue, "${" + variableName + "}");
+        }
+
+        Set<String> candidateNames = new LinkedHashSet<>();
+        if (parameterName != null && !parameterName.isBlank()) {
+            candidateNames.add(parameterName.trim());
+        }
+        if (variableName != null && !variableName.isBlank()) {
+            candidateNames.add(variableName.trim());
+        }
+        Pattern placeholderPattern = Pattern.compile("(?<!\\$)\\{([A-Za-z_$][A-Za-z0-9_$-]*)}");
+        Matcher matcher = placeholderPattern.matcher(path);
+        StringBuffer updated = new StringBuffer();
+        boolean replaced = false;
+        while (matcher.find()) {
+            String placeholderName = matcher.group(1);
+            if (candidateNames.stream().anyMatch(candidate -> samePlaceholderName(candidate, placeholderName))) {
+                matcher.appendReplacement(updated, Matcher.quoteReplacement("${" + variableName + "}"));
+                replaced = true;
+            } else if (!replaced && !candidateNames.isEmpty()) {
+                matcher.appendReplacement(updated, Matcher.quoteReplacement("${" + variableName + "}"));
+                replaced = true;
+            } else {
+                matcher.appendReplacement(updated, Matcher.quoteReplacement(matcher.group(0)));
+            }
+        }
+        matcher.appendTail(updated);
+        return replaced ? updated.toString() : path;
+    }
+
+    private boolean samePlaceholderName(String candidate, String placeholderName) {
+        if (candidate == null || placeholderName == null) {
+            return false;
+        }
+        String normalizedCandidate = candidate.trim();
+        String normalizedPlaceholder = placeholderName.trim();
+        if (normalizedCandidate.equalsIgnoreCase(normalizedPlaceholder)) {
+            return true;
+        }
+        return normalizedCandidate.replaceAll("[^A-Za-z0-9_$-]", "_")
+                .equalsIgnoreCase(normalizedPlaceholder.replaceAll("[^A-Za-z0-9_$-]", "_"));
+    }
+
+    private boolean canSafelyReplace(String value) {
+        if (value == null || value.isBlank()) {
+            return false;
+        }
+        return value.length() <= 256 && value.matches("[A-Za-z0-9_:/.-]{1,256}");
+    }
+
     private String extractResponseBody(JsonNode responseNode) {
         if (responseNode == null || responseNode.isMissingNode() || responseNode.isNull()) {
             return null;
         }
         JsonNode content = responseNode.path("content");
-        return content.path("text").asText(null);
+        String text = content.path("text").asText(null);
+        return HarCorrelationScanner.capBody(text);
     }
 
     private Map<String, List<String>> extractResponseHeaders(JsonNode responseNode) {

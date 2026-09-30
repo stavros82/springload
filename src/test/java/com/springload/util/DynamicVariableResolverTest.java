@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Map;
 import java.net.http.HttpHeaders;
+import java.util.LinkedHashMap;
 import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -51,6 +52,7 @@ class DynamicVariableResolverTest {
     void detectsCorrelatedVariables() {
         assertTrue(DynamicVariableResolver.hasCorrelatedVariables("{\"petId\": \"${pet_id}\"}"));
         assertTrue(DynamicVariableResolver.hasCorrelatedVariables("/api/owners/${owner_id}/pets"));
+        assertTrue(DynamicVariableResolver.hasCorrelatedVariables("/api/polls/{id}/votes"));
         assertFalse(DynamicVariableResolver.hasCorrelatedVariables("/api/owners/${random(1-100)}/pets"));
         assertFalse(DynamicVariableResolver.hasCorrelatedVariables("/api/items/${random.uuid}"));
         assertFalse(DynamicVariableResolver.hasCorrelatedVariables("ts=${timestamp}"));
@@ -70,6 +72,19 @@ class DynamicVariableResolverTest {
                 DynamicVariableResolver.resolve("/customers/${customerId}", extracted));
         assertEquals("/customers/42",
                 DynamicVariableResolver.resolve("/customers/{customerId}", extracted));
+    }
+
+    @Test
+    void resolvesNestedDynamicVariablesUntilStable() {
+        Map<String, String> flowVariables = new LinkedHashMap<>();
+        flowVariables.put("pollLength_days", "3");
+        flowVariables.put("pollLength_hours", "72");
+        flowVariables.put("choices_1_text", "hoi");
+
+        assertEquals("/api/polls/3", DynamicVariableResolver.resolve("/api/polls/${pollLength_days}", flowVariables));
+        assertEquals("/api/polls/72", DynamicVariableResolver.resolve("/api/polls/${pollLength_hours}", flowVariables));
+        assertEquals("/api/polls/3",
+                DynamicVariableResolver.resolve("/api/polls/${${pollLength_days}}", flowVariables));
     }
 
     @Test

@@ -267,9 +267,28 @@
 
         try {
             const res = await fetch('/api/v1/parse', { method: 'POST', body: formData });
-            if (!res.ok) throw new Error(`Parse failed with HTTP ${res.status}`);
+            const rawText = await res.text();
+            if (!res.ok) {
+                let message = `Parse failed with HTTP ${res.status}`;
+                if (rawText) {
+                    try {
+                        const payload = JSON.parse(rawText);
+                        message = payload.error || payload.message || message;
+                    } catch {
+                        const clean = rawText.replace(/\s+/g, ' ').trim();
+                        message = clean || message;
+                    }
+                } else {
+                    message = `The server rejected this blueprint (HTTP ${res.status}). Please check the file format and try again.`;
+                }
+                throw new Error(message);
+            }
+            if (!rawText) {
+                throw new Error('The server returned an empty response. Please verify the selected blueprint format and try again.');
+            }
 
-            currentConfig = await res.json();
+            const payload = JSON.parse(rawText);
+            currentConfig = payload;
             renderScenarioStudio(currentConfig);
         } catch (err) {
             alert(`Parsing error: ${err.message}`);

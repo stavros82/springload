@@ -171,8 +171,9 @@ public class ReactiveLoadExecutionService implements LoadExecutionService {
             String resolvedBody = DynamicVariableResolver.resolve(scenario.body(), flowVariables);
 
             if (DynamicVariableResolver.hasUnresolvedVariables(resolvedPath)) {
-                return Mono.error(new IllegalArgumentException("Unresolved flow variable in path '"
-                        + scenario.path() + "'. Ensure the extracting scenario is enabled and runs before this request."));
+                log.warn("Skipping '{}' because path '{}' still contains unresolved flow variables. Ensure the extracting scenario is enabled and runs before this request.",
+                        scenario.method(), scenario.path());
+                return Mono.empty();
             }
             WebClient.RequestBodySpec bodySpec = webClient
                     .method(HttpMethod.valueOf(scenario.method().toUpperCase()))
